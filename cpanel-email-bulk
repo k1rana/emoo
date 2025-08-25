@@ -1,0 +1,602 @@
+#!/bin/bash
+
+# cPanel Bulk Email Password Reset Script
+# Usage: ./cpanel_bulk_reset.sh [server] [username] [api_key]
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Global variable for auth method
+AUTH_METHOD="cpanel"
+
+# Default values
+DEFAULT_PORT=2083
+CSV_FILE="email_password_reset_$(date +%Y%m%d_%H%M%S).csv"
+
+# Function to print colored output
+print_color() {
+    local color=$1
+    shift
+    echo -e "${color}$@${NC}"
+}
+
+# Function to generate random password
+generate_password() {
+    local length=${1:-12}
+    tr -dc 'A-Za-z0-9!@#$%^&*' < /dev/urandom | head -c $length
+}
+
+# Function to validate API connection
+validate_api() {
+    local server=$1
+    local username=$2
+    local api_key=$3
+    
+    print_color $BLUE "Validating API connection..."
+    
+    # Test cpanel auth method
+    local response=$(curl -s -k -H "Authorization: cpanel $username:$api_key" \
+        "https://$server/execute/Quota/get_quota_info" 2>&1)
+    
+    # Check if response contains valid JSON with status:1
+    if [[ "$response" == *'"status":1'* ]] && [[ "$response" == *'"data"'* ]]; then
+        AUTH_METHOD="cpanel"
+        return 0
+    fi
+    
+    # If first method fails, try basic auth
+    print_color $YELLOW "Trying Basic Auth method..."
+    local response2=$(curl -s -k -u "$username:$api_key" \
+        "https://$server/execute/Quota/get_quota_info" 2>&1)
+    
+    if [[ "$response2" == *'"status":1'* ]] && [[ "$response2" == *'"data"'* ]]; then
+        AUTH_METHOD="basic"
+        return 0
+    fi
+    
+    # Try UAPI token method
+    print_color $YELLOW "Trying UAPI token method..."
+    local response3=$(curl -s -k -H "Authorization: uapi-token $username:$api_key" \
+        "https://$server/execute/Quota/get_quota_info" 2>&1)
+    
+    if [[ "$response3" == *'"status":1'* ]] && [[ "$response3" == *'"data"'* ]]; then
+        AUTH_METHOD="uapi-token"
+        return 0
+    fi
+    
+    # All methods failed
+    print_color $RED "All authentication methods failed:"
+    print_color $CYAN "Method 1 (cpanel): $response"
+    print_color $CYAN "Method 2 (basic): $response2" 
+    print_color $CYAN "Method 3 (uapi-token): $response3"
+    return 1
+}
+
+# Function to get all domains
+get_domains() {
+    local server=$1
+    local username=$2
+    local api_key=$3
+    
+    print_color $BLUE "Fetching domains..."
+    
+    local curl_cmd=""
+    case $AUTH_METHOD in
+        "basic")
+            curl_cmd="curl -s -k -u \"$username:$api_key\""
+            ;;
+        "uapi-token")
+            curl_cmd="curl -s -k -H \"Authorization: uapi-token $username:$api_key\""
+            ;;
+        *)
+            curl_cmd="curl -s -k -H \"Authorization: cpanel $username:$api_key\""
+            ;;
+    esac
+    
+    local response=$(eval $curl_cmd "\"https://$server/execute/DomainInfo/domains_data\"")
+    
+    echo "$response" | grep -o '"domain":"[^"]*"' | sed 's/"domain":"//g' | sed 's/"//g' | sort -u
+}
+
+# Function to get email accounts for a domain with optional regex filter
+get_email_accounts() {
+    local server=$1
+    local username=$2
+    local api_key=$3
+    local domain=${4:-""}
+    local regex_filter=${5:-""}
+    
+    local curl_cmd=""
+    case $AUTH_METHOD in
+        "basic")
+            curl_cmd="curl -s -k -u \"$username:$api_key\""
+            ;;
+        "uapi-token")
+            curl_cmd="curl -s -k -H \"Authorization: uapi-token $username:$api_key\""
+            ;;
+        *)
+            curl_cmd="curl -s -k -H \"Authorization: cpanel $username:$api_key\""
+            ;;
+    esac
+    
+    # Build URL parameters
+    local url_params=""
+    if [[ -n "$regex_filter" ]]; then
+        url_params="regex=${regex_filter}"
+    elif [[ -n "$domain" ]]; then
+        url_params="regex=@${domain}"  # Use regex to filter by domain
+    else
+        url_params=""  # Get all emails
+    fi
+    
+    local url="https://$server/execute/Email/list_pops"
+    if [[ -n "$url_params" ]]; then
+        url="${url}?${url_params}"
+    fi
+    
+    local response=$(eval $curl_cmd "\"$url\"")
+    
+    # Debug: show raw response if needed
+    if [[ "$DEBUG" == "true" ]]; then
+        print_color $CYAN "Debug - API Response: $response"
+    fi
+    
+    # Extract email users from response
+    local emails=$(echo "$response" | grep -o '"user":"[^"]*"' | sed 's/"user":"//g' | sed 's/"//g')
+    
+    if [[ -z "$emails" ]]; then
+        # Try alternative extraction methods
+        emails=$(echo "$response" | grep -o '"email":"[^"]*"' | sed 's/"email":"//g' | sed 's/"//g')
+        
+        if [[ -z "$emails" ]]; then
+            # Last resort: try to extract any email-like pattern
+            emails=$(echo "$response" | grep -oE '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
+        fi
+    fi
+    
+    # If we're filtering by domain using regex, make sure we actually get emails from that domain
+    if [[ -n "$domain" && -z "$regex_filter" ]]; then
+        # Filter results to ensure they're from the specified domain
+        echo "$emails" | while read -r email_user; do
+            if [[ -n "$email_user" ]]; then
+                echo "$email_user"
+            fi
+        done
+    else
+        echo "$emails"
+    fi
+}
+
+# Function to get all email accounts with optional regex filter
+get_all_emails() {
+    local server=$1
+    local username=$2
+    local api_key=$3
+    local regex_filter=${4:-""}
+    
+    local curl_cmd=""
+    case $AUTH_METHOD in
+        "basic")
+            curl_cmd="curl -s -k -u \"$username:$api_key\""
+            ;;
+        "uapi-token")
+            curl_cmd="curl -s -k -H \"Authorization: uapi-token $username:$api_key\""
+            ;;
+        *)
+            curl_cmd="curl -s -k -H \"Authorization: cpanel $username:$api_key\""
+            ;;
+    esac
+    
+    local url="https://$server/execute/Email/list_pops"
+    if [[ -n "$regex_filter" ]]; then
+        url="${url}?regex=${regex_filter}"
+    fi
+    
+    local response=$(eval $curl_cmd "\"$url\"")
+    
+    if [[ "$DEBUG" == "true" ]]; then
+        print_color $CYAN "Debug - All Emails API Response: $response"
+    fi
+    
+    # Extract emails with full addresses (user@domain)
+    local full_emails=$(echo "$response" | grep -oE '"user":"[^"]*"' | sed 's/"user":"//g' | sed 's/"//g')
+    echo "$full_emails"
+}
+
+# Function to get domains from all emails
+get_domains_from_emails() {
+    local server=$1
+    local username=$2
+    local api_key=$3
+    local regex_filter=${4:-""}
+    
+    print_color $BLUE "Fetching domains with email accounts..."
+    
+    local all_emails=($(get_all_emails "$server" "$username" "$api_key" "$regex_filter"))
+    local domains_with_emails=()
+    
+    # Extract unique domains from email addresses  
+    for email in "${all_emails[@]}"; do
+        if [[ "$email" == *"@"* ]]; then
+            local domain=$(echo "$email" | sed 's/.*@//')
+            # Add to array if not already present
+            if [[ ! " ${domains_with_emails[@]} " =~ " $domain " ]]; then
+                domains_with_emails+=("$domain")
+            fi
+        fi
+    done
+    
+    # Sort domains
+    printf '%s\n' "${domains_with_emails[@]}" | sort
+}
+}
+
+# Function to reset email password
+reset_email_password() {
+    local server=$1
+    local username=$2
+    local api_key=$3
+    local email_user=$4
+    local domain=$5
+    local new_password=$6
+    
+    local curl_cmd=""
+    case $AUTH_METHOD in
+        "basic")
+            curl_cmd="curl -s -k -u \"$username:$api_key\""
+            ;;
+        "uapi-token")
+            curl_cmd="curl -s -k -H \"Authorization: uapi-token $username:$api_key\""
+            ;;
+        *)
+            curl_cmd="curl -s -k -H \"Authorization: cpanel $username:$api_key\""
+            ;;
+    esac
+    
+    local response=$(eval $curl_cmd \
+        "-X POST \"https://$server/execute/Email/passwd_pop\" \
+        -d \"email=${email_user}\" \
+        -d \"domain=${domain}\" \
+        -d \"password=${new_password}\"")
+    
+    if [[ "$response" == *'"status":1'* ]]; then
+        return 0
+    else
+        print_color $RED "    Error response: $response"
+        return 1
+    fi
+}
+
+# Function for domain selection with arrow keys
+select_domains() {
+    local domains=($@)
+    local selected=()
+    local current=0
+    local total=${#domains[@]}
+    
+    # Initialize all as excluded (0)
+    local status=()
+    for i in $(seq 0 $((total-1))); do
+        status[i]=0
+    done
+    
+    # Save terminal settings and enable raw mode
+    local old_tty_settings=$(stty -g)
+    stty -echo -icanon min 1 time 0
+    
+    while true; do
+        clear
+        print_color $CYAN "=== Domain Selection ==="
+        print_color $YELLOW "Use ↑/↓ to navigate, SPACE/→ to include, ←/x to exclude, ENTER to confirm, q to quit"
+        print_color $CYAN "Current selection: $(echo ${status[@]} | tr ' ' '\n' | grep -c '1') / $total domains"
+        echo
+        
+        for i in $(seq 0 $((total-1))); do
+            local prefix=""
+            local suffix=""
+            local marker=""
+            
+            if [[ $i -eq $current ]]; then
+                prefix="${BLUE}>>> "
+                suffix="${NC}"
+            else
+                prefix="    "
+            fi
+            
+            if [[ ${status[i]} -eq 1 ]]; then
+                marker="${GREEN}[✓]${NC}"
+            else
+                marker="${RED}[✗]${NC}"
+            fi
+            
+            echo -e "${prefix}${marker} ${domains[i]}${suffix}"
+        done
+        
+        echo
+        print_color $YELLOW "Controls: ↑/↓=navigate, SPACE/→=select, ←/x=deselect, ENTER=confirm, q=quit"
+        
+        # Read single character
+        key=""
+        read -rsn1 key 2>/dev/null || continue
+        
+        case $key in
+            $'\x1b')  # ESC sequence
+                # Read the next two characters for arrow keys
+                read -rsn2 arrows 2>/dev/null
+                case $arrows in
+                    '[A') # Up arrow
+                        ((current > 0)) && ((current--))
+                        ;;
+                    '[B') # Down arrow
+                        ((current < total-1)) && ((current++))
+                        ;;
+                    '[C') # Right arrow - include
+                        status[current]=1
+                        ;;
+                    '[D') # Left arrow - exclude
+                        status[current]=0
+                        ;;
+                esac
+                ;;
+            '') # Enter
+                break
+                ;;
+            ' ') # Space - toggle/select
+                status[current]=1
+                ;;
+            'x'|'X') # x - exclude
+                status[current]=0
+                ;;
+            'q'|'Q') # Quit
+                stty "$old_tty_settings"
+                echo "Selection cancelled."
+                exit 0
+                ;;
+            'j'|'J') # j - down (vim style)
+                ((current < total-1)) && ((current++))
+                ;;
+            'k'|'K') # k - up (vim style)
+                ((current > 0)) && ((current--))
+                ;;
+            'a'|'A') # a - select all
+                for i in $(seq 0 $((total-1))); do
+                    status[i]=1
+                done
+                ;;
+            'n'|'N') # n - select none
+                for i in $(seq 0 $((total-1))); do
+                    status[i]=0
+                done
+                ;;
+        esac
+    done
+    
+    # Restore terminal settings
+    stty "$old_tty_settings"
+    
+    # Return selected domains
+    for i in $(seq 0 $((total-1))); do
+        if [[ ${status[i]} -eq 1 ]]; then
+            selected+=(${domains[i]})
+        fi
+    done
+    
+    echo "${selected[@]}"
+}
+
+# Main script
+main() {
+    print_color $GREEN "=== cPanel Bulk Email Password Reset ==="
+    echo
+    
+    # Parse arguments for regex filter
+    REGEX_FILTER=""
+    for arg in "$@"; do
+        if [[ "$arg" =~ ^--regex=(.+)$ ]]; then
+            REGEX_FILTER="${BASH_REMATCH[1]}"
+            print_color $YELLOW "Using regex filter: $REGEX_FILTER"
+        elif [[ "$arg" == "--debug" ]]; then
+            DEBUG=true
+        fi
+    done
+    
+    # Get server input
+    if [[ -n "$1" && ! "$1" =~ ^--.*$ ]]; then
+        SERVER="$1"
+    else
+        read -p "Enter server domain/IP (with optional port, default: 2083): " SERVER
+    fi
+    
+    # Add default port if not specified
+    if [[ ! "$SERVER" =~ :[0-9]+$ ]]; then
+        SERVER="$SERVER:$DEFAULT_PORT"
+    fi
+    
+    # Get username
+    if [[ -n "$2" && ! "$2" =~ ^--.*$ ]]; then
+        USERNAME="$2"
+    else
+        read -p "Enter cPanel username: " USERNAME
+    fi
+    
+    # Get API key
+    if [[ -n "$3" && ! "$3" =~ ^--.*$ ]]; then
+        API_KEY="$3"
+    else
+        read -s -p "Enter cPanel API key: " API_KEY
+        echo
+    fi
+    
+    # Validate API connection
+    if ! validate_api "$SERVER" "$USERNAME" "$API_KEY"; then
+        print_color $RED "❌ API validation failed! Please check your credentials."
+        exit 1
+    fi
+    
+    print_color $GREEN "✅ API connection validated successfully!"
+    echo
+    
+    # Get domains with email accounts only (default behavior)
+    if [[ -n "$REGEX_FILTER" ]]; then
+        print_color $BLUE "Fetching domains with emails matching regex: $REGEX_FILTER"
+        DOMAINS=($(get_domains_from_emails "$SERVER" "$USERNAME" "$API_KEY" "$REGEX_FILTER"))
+    else
+        print_color $BLUE "Fetching domains with email accounts..."
+        DOMAINS=($(get_domains_from_emails "$SERVER" "$USERNAME" "$API_KEY"))
+    fi
+    
+    if [[ ${#DOMAINS[@]} -eq 0 ]]; then
+        print_color $RED "❌ No domains with email accounts found!"
+        if [[ -n "$REGEX_FILTER" ]]; then
+            print_color $YELLOW "Try adjusting your regex filter or check if emails exist."
+        fi
+        exit 1
+    fi
+    
+    print_color $GREEN "Found ${#DOMAINS[@]} domains with email accounts:"
+    
+    # Show domains with email count
+    for domain in "${DOMAINS[@]}"; do
+        if [[ -n "$REGEX_FILTER" ]]; then
+            email_count=($(get_email_accounts "$SERVER" "$USERNAME" "$API_KEY" "$domain" "$REGEX_FILTER"))
+        else
+            email_count=($(get_email_accounts "$SERVER" "$USERNAME" "$API_KEY" "$domain"))
+        fi
+        print_color $CYAN "  - $domain (${#email_count[@]} emails)"
+    done
+    echo
+    
+    # Select domains
+    print_color $BLUE "Starting domain selection..."
+    print_color $YELLOW "Press 's' for simple text-based selection or any other key for interactive selection..."
+    read -rsn1 -t 5 selection_method
+    echo
+    
+    if [[ "$selection_method" == "s" || "$selection_method" == "S" ]]; then
+        # Simple text-based selection
+        print_color $CYAN "=== Simple Domain Selection ==="
+        print_color $YELLOW "Enter domain numbers separated by spaces (e.g., 1 3 5) or 'all' for all domains:"
+        for i in "${!DOMAINS[@]}"; do
+            echo "$((i+1)). ${DOMAINS[i]}"
+        done
+        echo
+        read -p "Your selection: " domain_input
+        
+        if [[ "$domain_input" == "all" ]]; then
+            SELECTED_DOMAINS=("${DOMAINS[@]}")
+        else
+            SELECTED_DOMAINS=()
+            for num in $domain_input; do
+                if [[ "$num" =~ ^[0-9]+$ ]] && (( num >= 1 && num <= ${#DOMAINS[@]} )); then
+                    SELECTED_DOMAINS+=("${DOMAINS[$((num-1))]}")
+                fi
+            done
+        fi
+    else
+        # Interactive selection
+        sleep 1
+        SELECTED_DOMAINS=($(select_domains "${DOMAINS[@]}"))
+    fi
+    
+    if [[ ${#SELECTED_DOMAINS[@]} -eq 0 ]]; then
+        print_color $YELLOW "No domains selected. Exiting."
+        exit 0
+    fi
+    
+    clear
+    print_color $GREEN "Selected domains: ${SELECTED_DOMAINS[*]}"
+    echo
+    
+    # Get new password preference
+    read -p "Enter new password (leave empty for random passwords): " NEW_PASSWORD
+    
+    if [[ -z "$NEW_PASSWORD" ]]; then
+        USE_RANDOM=true
+        print_color $YELLOW "Will generate random passwords for each account"
+    else
+        USE_RANDOM=false
+        print_color $YELLOW "Will use the same password for all accounts"
+    fi
+    
+    echo
+    
+    # Initialize CSV file
+    echo "Domain,Email,Old_Password_Status,New_Password,Reset_Status,Timestamp" > "$CSV_FILE"
+    
+    # Process each selected domain
+    for domain in "${SELECTED_DOMAINS[@]}"; do
+        print_color $CYAN "Processing domain: $domain"
+        
+        if [[ -n "$REGEX_FILTER" ]]; then
+            EMAIL_ACCOUNTS=($(get_email_accounts "$SERVER" "$USERNAME" "$API_KEY" "$domain" "$REGEX_FILTER"))
+        else
+            EMAIL_ACCOUNTS=($(get_email_accounts "$SERVER" "$USERNAME" "$API_KEY" "$domain"))
+        fi
+        
+        if [[ ${#EMAIL_ACCOUNTS[@]} -eq 0 ]]; then
+            print_color $YELLOW "  No email accounts found for $domain"
+            continue
+        fi
+        
+        for email_user in "${EMAIL_ACCOUNTS[@]}"; do
+            if [[ "$USE_RANDOM" == true ]]; then
+                PASSWORD=$(generate_password 12)
+            else
+                PASSWORD="$NEW_PASSWORD"
+            fi
+            
+            # Handle case where email_user might already include domain
+            if [[ "$email_user" == *"@"* ]]; then
+                full_email="$email_user"
+                email_user_only=$(echo "$email_user" | sed 's/@.*//')
+            else
+                full_email="${email_user}@${domain}"
+                email_user_only="$email_user"
+            fi
+            
+            print_color $BLUE "  Resetting password for: $full_email"
+            
+            if reset_email_password "$SERVER" "$USERNAME" "$API_KEY" "$email_user_only" "$domain" "$PASSWORD"; then
+                print_color $GREEN "    ✅ Success"
+                echo "$domain,$full_email,N/A,$PASSWORD,SUCCESS,$(date)" >> "$CSV_FILE"
+            else
+                print_color $RED "    ❌ Failed"
+                echo "$domain,$full_email,N/A,$PASSWORD,FAILED,$(date)" >> "$CSV_FILE"
+            fi
+        done
+        
+        echo
+    done
+    
+    print_color $GREEN "=== Process Complete ==="
+    print_color $CYAN "Results saved to: $CSV_FILE"
+    
+    # Show summary
+    local success_count=$(grep -c "SUCCESS" "$CSV_FILE" || echo "0")
+    local failed_count=$(grep -c "FAILED" "$CSV_FILE" || echo "0")
+    
+    echo
+    print_color $GREEN "Summary:"
+    print_color $GREEN "  Successful resets: $success_count"
+    print_color $RED "  Failed resets: $failed_count"
+    
+    if [[ "$USE_RANDOM" == true ]]; then
+        print_color $YELLOW "  Random passwords generated - check CSV file for details"
+    fi
+}
+
+# Check dependencies
+if ! command -v curl &> /dev/null; then
+    print_color $RED "❌ curl is required but not installed."
+    exit 1
+fi
+
+# Run main function
+main "$@"
