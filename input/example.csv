@@ -1,1 +1,3 @@
-src_host,src_user,src_pass,dst_host,dst_user,dst_pass
+src_host,src_user,src_pass,dst_host,dst_user,dst_pass,src_port,dst_port,src_ssl,dst_ssl
+mail.example.com,user1@example.com,password1,mail.newserver.com,user1@newserver.com,newpassword1,993,993,1,1
+mail.example.com,user2@example.com,password2,mail.newserver.com,user2@newserver.com,newpassword2,993,993,1,1
