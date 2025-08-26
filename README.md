@@ -1,6 +1,6 @@
 # IMAP Migration CLI Tool
 
-CLI tool untuk migrasi email IMAP dan operasi bulk cPanel yang di-rewrite dari bash script ke Node.js.
+CLI tool for IMAP email migration and cPanel bulk operations, rewritten from bash scripts to Node.js.
 
 ## Installation
 
@@ -21,28 +21,28 @@ chmod +x bin/cli.js
 ### General Help
 
 ```bash
-# Lihat semua commands yang tersedia
+# View all available commands
 node bin/cli.js --help
 
-# atau
+# or
 pnpm start --help
 ```
 
 ### cPanel Bulk Email Password Reset
 
-Fitur ini memungkinkan reset password email secara bulk di cPanel.
+This feature allows bulk email password reset in cPanel.
 
 #### Interactive Mode
 
 ```bash
-# Mode interaktif - akan menanyakan server, username, dan API key
+# Interactive mode - will ask for server, username, and API key
 node bin/cli.js cpanel
 ```
 
 #### Command Line Mode
 
 ```bash
-# Dengan semua parameter
+# With all parameters
 node bin/cli.js cpanel \
   --server "server.example.com:2083" \
   --username "cpanel_user" \
@@ -50,7 +50,7 @@ node bin/cli.js cpanel \
   --password "new_password_for_all" \
   --output "./results/custom_output.csv"
 
-# Atau dengan random passwords
+# Or with random passwords
 node bin/cli.js cpanel \
   --server "server.example.com" \
   --username "cpanel_user" \
@@ -60,48 +60,48 @@ node bin/cli.js cpanel \
 
 #### Options
 
-- `-s, --server <server>`: cPanel server domain/IP (dengan optional port)
+- `-s, --server <server>`: cPanel server domain/IP (with optional port)
 - `-u, --username <username>`: cPanel username
 - `-k, --api-key <key>`: cPanel API key
-- `-p, --password <password>`: Password baru untuk semua akun (kosong = random)
-- `-o, --output <file>`: Path file CSV output
-- `--regex <pattern>`: Filter email menggunakan regex pattern
+- `-p, --password <password>`: New password for all accounts (empty = random)
+- `-o, --output <file>`: CSV output file path
+- `--regex <pattern>`: Filter emails using regex pattern
 - `--debug`: Enable debug mode
 
 ### IMAP Email Synchronization
 
-Fitur ini untuk sinkronisasi email antara server IMAP menggunakan imapsync.
+This feature is for email synchronization between IMAP servers using imapsync.
 
 #### Basic Usage
 
 ```bash
-# Sync menggunakan CSV default (input/example.csv)
+# Sync using default CSV (input/example.csv)
 node bin/cli.js sync
 
-# Sync dengan custom CSV file
+# Sync with custom CSV file
 node bin/cli.js sync --csv input/my-migration.csv
 
-# Dry run - lihat apa yang akan di-sync tanpa eksekusi
+# Dry run - see what would be synced without execution
 node bin/cli.js sync --dry-run --csv input/example.csv
 
-# Menggunakan Docker untuk imapsync
+# Use Docker for imapsync
 node bin/cli.js sync --docker --csv input/example.csv
 
-# Parallel processing dengan 4 jobs
+# Parallel processing with 4 jobs
 node bin/cli.js sync --jobs 4 --csv input/example.csv
 ```
 
 #### Options
 
-- `-c, --csv <file>`: CSV file berisi konfigurasi sync (default: "input/example.csv")
-- `-j, --jobs <number>`: Jumlah parallel jobs (default: "1")
-- `--docker`: Gunakan Docker untuk imapsync
-- `--log-dir <dir>`: Directory untuk log files (default: "./results")
-- `--dry-run`: Preview command tanpa eksekusi
+- `-c, --csv <file>`: CSV file containing sync configuration (default: "input/example.csv")
+- `-j, --jobs <number>`: Number of parallel jobs (default: "1")
+- `--docker`: Use Docker for imapsync
+- `--log-dir <dir>`: Directory for log files (default: "./results")
+- `--dry-run`: Preview commands without execution
 
 #### CSV Format for Sync
 
-File CSV harus mengandung kolom-kolom berikut:
+The CSV file must contain the following columns:
 
 ```csv
 src_host,src_user,src_pass,dst_host,dst_user,dst_pass,src_port,dst_port,src_ssl,dst_ssl,src_auth,dst_auth
@@ -126,9 +126,9 @@ mail.old.com,user2@old.com,pass2,mail.new.com,user2@new.com,pass2,143,143,0,0,PL
 
 ## Features
 
-### Migrasi dari Bash Scripts
+### Migration from Bash Scripts
 
-Tool ini adalah rewrite dari bash scripts:
+This tool is a rewrite from bash scripts:
 
 - `cpanel-email-bulk` → `node bin/cli.js cpanel`
 - `sync` → `node bin/cli.js sync`
@@ -139,14 +139,14 @@ Tool ini adalah rewrite dari bash scripts:
 - ✅ Interactive domain selection
 - ✅ Bulk password reset
 - ✅ Random password generation
-- ✅ CSV export dengan timestamp
-- ✅ Progress indicators dan colored output
+- ✅ CSV export with timestamp
+- ✅ Progress indicators and colored output
 
 ### IMAP Sync Features
 
 - ✅ CSV-based configuration
-- ✅ Sequential dan parallel processing
-- ✅ Docker support untuk imapsync
+- ✅ Sequential and parallel processing
+- ✅ Docker support for imapsync
 - ✅ Dry-run mode
 - ✅ Detailed logging
 - ✅ SSL/TLS support
@@ -155,8 +155,8 @@ Tool ini adalah rewrite dari bash scripts:
 ## Dependencies
 
 - **Node.js**: >= 18.0.0
-- **imapsync**: Optional (jika tidak menggunakan Docker)
-- **Docker**: Optional (untuk imapsync Docker mode)
+- **imapsync**: Optional (if not using Docker)
+- **Docker**: Optional (for imapsync Docker mode)
 
 ## Directory Structure
 
@@ -178,7 +178,7 @@ migrate-imap/
 ### Example 1: cPanel Password Reset
 
 ```bash
-# Reset passwords untuk semua email di domain yang dipilih
+# Reset passwords for all emails in selected domain
 node bin/cli.js cpanel \
   --server "cpanel.example.com" \
   --username "admin" \
@@ -188,7 +188,7 @@ node bin/cli.js cpanel \
 ### Example 2: IMAP Migration with Parallel Jobs
 
 ```bash
-# Migrate 10 accounts secara parallel menggunakan Docker
+# Migrate 10 accounts in parallel using Docker
 node bin/cli.js sync \
   --csv input/migration-batch1.csv \
   --jobs 10 \
@@ -199,7 +199,7 @@ node bin/cli.js sync \
 ### Example 3: Dry Run Testing
 
 ```bash
-# Test konfigurasi tanpa eksekusi
+# Test configuration without execution
 node bin/cli.js sync --dry-run --csv input/test-config.csv
 ```
 
@@ -208,13 +208,13 @@ node bin/cli.js sync --dry-run --csv input/test-config.csv
 ### imapsync not found
 
 ```bash
-# Install imapsync locally atau gunakan Docker mode
+# Install imapsync locally or use Docker mode
 node bin/cli.js sync --docker
 ```
 
 ### cPanel API Authentication Issues
 
-Tool akan otomatis mencoba 3 metode authentication:
+The tool will automatically try 3 authentication methods:
 
 1. cPanel auth (`Authorization: cpanel username:apikey`)
 2. Basic auth (`Authorization: Basic`)
@@ -222,12 +222,12 @@ Tool akan otomatis mencoba 3 metode authentication:
 
 ### CSV Format Issues
 
-Pastikan CSV file:
+Make sure the CSV file:
 
-- Menggunakan comma (`,`) sebagai separator
-- Memiliki header row
-- Required columns tersedia
-- Tidak ada baris kosong di tengah data
+- Uses comma (`,`) as separator
+- Has header row
+- Required columns are available
+- No empty rows in the middle of data
 
 ## License
 
