@@ -3,8 +3,8 @@ import { spawn } from 'child_process';
 import csv from 'csv-parser';
 import { createReadStream } from 'fs';
 import fs from 'fs-extra';
-import path from 'path';
 import ora from 'ora';
+import path from 'path';
 
 /**
  * IMAP synchronization service
@@ -59,7 +59,7 @@ export class ImapService {
   /**
    * Build imapsync command arguments from configuration
    */
-  buildImapsyncArgs(config) {
+  buildImapsyncArgs(config, options = {}) {
     const {
       src_host: shost,
       src_user: suser,
@@ -76,7 +76,22 @@ export class ImapService {
     } = config;
 
     // Base flags
-    const flags = ['--dry', '--justfolders'];
+    const flags = [];
+    
+    // Add dry run flag only if explicitly requested
+    if (options.dryRun) {
+      flags.push('--dry');
+    }
+    
+    // Add justfolders flag for folder structure preview (optional)
+    if (options.justFolders) {
+      flags.push('--justfolders');
+    }
+
+    // Add log file if provided
+    if (options.logFile) {
+      flags.push('--logfile', options.logFile);
+    }
 
     // Add ports if specified
     if (src_port) flags.push('--port1', src_port);
@@ -114,7 +129,11 @@ export class ImapService {
     const { src_user: suser, dst_user: duser } = config;
     const sanitizedSrc = suser.replace(/@/g, '_');
     const sanitizedDst = duser.replace(/@/g, '_');
-    return path.join(logDir, `${sanitizedSrc}__to__${sanitizedDst}.log`);
+    
+    // Add timestamp to log file name
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    
+    return path.join(logDir, `${sanitizedSrc}__to__${sanitizedDst}_${timestamp}.log`);
   }
 
   /**
@@ -134,11 +153,11 @@ export class ImapService {
 
     console.log(chalk.blue(`Syncing: ${suser} -> ${duser}`));
 
-    const logDir = options.logDir || './results';
+    const logDir = options.logDir || './results/sync-log';
     await fs.ensureDir(logDir);
 
     const logFile = this.generateLogFilePath(config, logDir);
-    const imapsyncArgs = this.buildImapsyncArgs(config);
+    const imapsyncArgs = this.buildImapsyncArgs(config, { ...options, logFile });
 
     if (options.dryRun) {
       console.log(chalk.yellow('DRY RUN - Command that would be executed:'));

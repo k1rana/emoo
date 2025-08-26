@@ -50,7 +50,7 @@ export class EmailService {
     }
   }
 
-  async createAccount(username, domain, password, quota = 1024) {
+  async createAccount(username, domain, password, quota = 2048) {
     const fullEmail = `${username}@${domain}`;
     
     debugLog(2, `Creating email account: ${fullEmail}`);
@@ -58,7 +58,7 @@ export class EmailService {
     
     try {
       // addpop creates a new email account
-      const response = await this.cpanel.postRequest('Email/addpop', {
+      const response = await this.cpanel.makeRequest('Email/add_pop', {
         email: username,
         password: password,
         domain: domain,
