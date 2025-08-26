@@ -5,11 +5,12 @@
   "type": "module",
   "main": "index.js",
   "bin": {
-    "emoo": "./bin/cli.js"
+    "emoo": "./bin/run.js"
   },
   "scripts": {
-    "start": "node bin/cli.js",
-    "dev": "node --watch bin/cli.js",
+    "build": "echo 'No build needed for JS'",
+    "start": "./bin/run.js",
+    "dev": "./bin/dev.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -24,13 +25,27 @@
   "license": "ISC",
   "packageManager": "pnpm@10.8.0",
   "dependencies": {
+    "@oclif/core": "^4.5.2",
+    "@oclif/plugin-help": "^6.2.32",
     "axios": "^1.11.0",
     "chalk": "^5.6.0",
-    "commander": "^14.0.0",
     "csv-parser": "^3.2.0",
     "csv-writer": "^1.6.0",
     "fs-extra": "^11.3.1",
     "inquirer": "^12.9.4",
     "ora": "^8.2.0"
+  },
+  "oclif": {
+    "bin": "emoo",
+    "commands": "./src/commands",
+    "dirname": "emoo",
+    "topicSeparator": " ",
+    "plugins": [
+      "@oclif/plugin-help"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^18",
+    "ts-node": "^10.9.2"
   }
 }

@@ -16,8 +16,8 @@ cd emoo
 # Install dependencies
 pnpm install
 
-# Make CLI executable
-chmod +x bin/cli.js
+# Install globally for easier access
+pnpm install -g .
 ```
 
 ## Usage
@@ -26,28 +26,28 @@ chmod +x bin/cli.js
 
 ```bash
 # View all available commands
-node bin/cli.js --help
+emoo --help
 
-# or
+# or using pnpm
 pnpm start --help
 ```
 
-### cPanel Bulk Email Password Reset
+### cPanel Bulk Email Operations
 
-This feature allows bulk email password reset in cPanel.
+This feature allows bulk email operations in cPanel including password reset and email creation.
 
-#### Interactive Mode
+#### Password Reset - Interactive Mode
 
 ```bash
 # Interactive mode - will ask for server, username, and API key
-node bin/cli.js cpanel
+emoo cpanel reset
 ```
 
-#### Command Line Mode
+#### Password Reset - Command Line Mode
 
 ```bash
 # With all parameters
-node bin/cli.js cpanel \
+emoo cpanel reset \
   --server "server.example.com:2083" \
   --username "cpanel_user" \
   --api-key "your_api_key" \
@@ -55,11 +55,28 @@ node bin/cli.js cpanel \
   --output "./results/custom_output.csv"
 
 # Or with random passwords
-node bin/cli.js cpanel \
+emoo cpanel reset \
   --server "server.example.com" \
   --username "cpanel_user" \
   --api-key "your_api_key" \
   --output "./results/passwords.csv"
+```
+
+#### Bulk Email Creation
+
+```bash
+# Create emails from CSV file
+emoo cpanel create \
+  --server "server.example.com" \
+  --username "cpanel_user" \
+  --api-key "your_api_key" \
+  --csv "./input/new-emails.csv"
+
+# Or create manually with interactive prompts
+emoo cpanel create \
+  --server "server.example.com" \
+  --username "cpanel_user" \
+  --api-key "your_api_key"
 ```
 
 #### Options
@@ -80,19 +97,19 @@ This feature is for email synchronization between IMAP servers using imapsync.
 
 ```bash
 # Sync using default CSV (input/example.csv)
-node bin/cli.js sync
+emoo sync
 
 # Sync with custom CSV file
-node bin/cli.js sync --csv input/my-migration.csv
+emoo sync --csv input/my-migration.csv
 
 # Dry run - see what would be synced without execution
-node bin/cli.js sync --dry-run --csv input/example.csv
+emoo sync --dry-run --csv input/example.csv
 
 # Use Docker for imapsync
-node bin/cli.js sync --docker --csv input/example.csv
+emoo sync --docker --csv input/example.csv
 
 # Parallel processing with 4 jobs
-node bin/cli.js sync --jobs 4 --csv input/example.csv
+emoo sync --jobs 4 --csv input/example.csv
 ```
 
 #### Options
@@ -134,14 +151,15 @@ mail.old.com,user2@old.com,pass2,mail.new.com,user2@new.com,pass2,143,143,0,0,PL
 
 This tool is a rewrite from bash scripts:
 
-- `cpanel-email-bulk` → `node bin/cli.js cpanel`
-- `sync` → `node bin/cli.js sync`
+- `cpanel-email-bulk` → `emoo cpanel reset`
+- `sync` → `emoo sync`
 
 ### cPanel Features
 
 - ✅ Auto-detect authentication method (cpanel/basic/uapi-token)
 - ✅ Interactive domain selection
 - ✅ Bulk password reset
+- ✅ Bulk email creation
 - ✅ Random password generation
 - ✅ CSV export with timestamp
 - ✅ Progress indicators and colored output
@@ -162,38 +180,34 @@ This tool is a rewrite from bash scripts:
 - **imapsync**: Optional (if not using Docker)
 - **Docker**: Optional (for imapsync Docker mode)
 
-## Directory Structure
-
-```
-emoo/
-├── bin/cli.js          # Main CLI entry point
-├── src/
-│   ├── cpanel-bulk.js  # cPanel bulk operations
-│   └── imap-sync.js    # IMAP synchronization
-├── input/              # CSV input files
-│   ├── example.csv     # Example configuration
-│   └── *.csv           # Other configuration files
-├── results/            # Output directory
-└── package.json
-```
-
 ## Examples
 
 ### Example 1: cPanel Password Reset
 
 ```bash
 # Reset passwords for all emails in selected domain
-node bin/cli.js cpanel \
+emoo cpanel reset \
   --server "cpanel.example.com" \
   --username "admin" \
   --api-key "your-api-key"
 ```
 
-### Example 2: IMAP Migration with Parallel Jobs
+### Example 2: cPanel Bulk Email Creation
+
+```bash
+# Create emails from CSV file
+emoo cpanel create \
+  --server "cpanel.example.com" \
+  --username "admin" \
+  --api-key "your-api-key" \
+  --csv input/new-emails.csv
+```
+
+### Example 3: IMAP Migration with Parallel Jobs
 
 ```bash
 # Migrate 10 accounts in parallel using Docker
-node bin/cli.js sync \
+emoo sync \
   --csv input/migration-batch1.csv \
   --jobs 10 \
   --docker \
@@ -204,7 +218,7 @@ node bin/cli.js sync \
 
 ```bash
 # Test configuration without execution
-node bin/cli.js sync --dry-run --csv input/test-config.csv
+emoo sync --dry-run --csv input/test-config.csv
 ```
 
 ## Troubleshooting
@@ -213,7 +227,7 @@ node bin/cli.js sync --dry-run --csv input/test-config.csv
 
 ```bash
 # Install imapsync locally or use Docker mode
-node bin/cli.js sync --docker
+emoo sync --docker
 ```
 
 ### cPanel API Authentication Issues
