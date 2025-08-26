@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { createObjectCsvWriter } from 'csv-writer';
 import fs from 'fs-extra';
 import inquirer from 'inquirer';
+import ora from 'ora';
 import path from 'path';
 
 // Generate random password
@@ -49,7 +50,7 @@ class CpanelAPI {
   }
 
   async validateConnection() {
-    printColor('blue', 'Validating API connection...');
+    const spinner = ora('Validating API connection...').start();
     
     const methods = [
       { name: 'cpanel', headers: { 'Authorization': `cpanel ${this.username}:${this.apiKey}` } },
@@ -59,6 +60,7 @@ class CpanelAPI {
 
     for (const method of methods) {
       try {
+        spinner.text = `Validating API connection using ${method.name} auth...`;
         const config = {
           url: `https://${this.server}/execute/Quota/get_quota_info`,
           method: 'GET',
@@ -71,14 +73,16 @@ class CpanelAPI {
         
         if (response.data && response.data.status === 1 && response.data.data) {
           this.authMethod = method.name;
-          printColor('green', `✅ API connection validated successfully using ${method.name} auth!`);
+          spinner.succeed(`API connection validated successfully using ${method.name} auth!`);
           return true;
         }
       } catch (error) {
+        debugLog(3, `Auth method ${method.name} failed:`, error.message);
         // Continue to next method
       }
     }
     
+    spinner.fail('All authentication methods failed. Please check your credentials.');
     throw new Error('All authentication methods failed. Please check your credentials.');
   }
 
@@ -133,59 +137,75 @@ class CpanelAPI {
   }
 
   async getDomains() {
-    printColor('blue', 'Fetching domains...');
-    const response = await this.makeRequest('DomainInfo/domains_data');
+    const spinner = ora('Fetching domains...').start();
     
-    debugLog(2, 'domains_data API response:', response.data);
-    
-    if (response.status === 1 && response.data) {
-      const domains = response.data.main_domain ? [response.data.main_domain] : [];
+    try {
+      const response = await this.makeRequest('DomainInfo/domains_data');
       
-      if (response.data.addon_domains) {
-        // addon_domains might be an array of objects or strings
-        const addonDomains = Array.isArray(response.data.addon_domains) 
-          ? response.data.addon_domains.map(domain => typeof domain === 'string' ? domain : domain.domain || domain.name || domain)
-          : Object.keys(response.data.addon_domains); // Sometimes it's an object
-        domains.push(...addonDomains);
-        debugLog(3, `Added ${addonDomains.length} addon domains:`, addonDomains);
+      debugLog(2, 'domains_data API response:', response.data);
+      
+      if (response.status === 1 && response.data) {
+        const domains = response.data.main_domain ? [response.data.main_domain] : [];
+        
+        if (response.data.addon_domains) {
+          // addon_domains might be an array of objects or strings
+          const addonDomains = Array.isArray(response.data.addon_domains) 
+            ? response.data.addon_domains.map(domain => typeof domain === 'string' ? domain : domain.domain || domain.name || domain)
+            : Object.keys(response.data.addon_domains); // Sometimes it's an object
+          domains.push(...addonDomains);
+          debugLog(3, `Added ${addonDomains.length} addon domains:`, addonDomains);
+        }
+        
+        if (response.data.sub_domains) {
+          // sub_domains might be an array of objects or strings  
+          const subDomains = Array.isArray(response.data.sub_domains)
+            ? response.data.sub_domains.map(domain => typeof domain === 'string' ? domain : domain.domain || domain.name || domain)
+            : Object.keys(response.data.sub_domains); // Sometimes it's an object
+          domains.push(...subDomains);
+          debugLog(3, `Added ${subDomains.length} sub domains:`, subDomains);
+        }
+        
+        // Filter out any undefined/null values and ensure all are strings
+        const cleanDomains = domains.filter(domain => domain && typeof domain === 'string');
+        debugLog(1, `Clean domains found: ${cleanDomains.length}`, cleanDomains);
+        
+        const uniqueDomains = [...new Set(cleanDomains)].sort();
+        spinner.succeed(`Found ${uniqueDomains.length} domains`);
+        return uniqueDomains;
       }
       
-      if (response.data.sub_domains) {
-        // sub_domains might be an array of objects or strings  
-        const subDomains = Array.isArray(response.data.sub_domains)
-          ? response.data.sub_domains.map(domain => typeof domain === 'string' ? domain : domain.domain || domain.name || domain)
-          : Object.keys(response.data.sub_domains); // Sometimes it's an object
-        domains.push(...subDomains);
-        debugLog(3, `Added ${subDomains.length} sub domains:`, subDomains);
-      }
-      
-      // Filter out any undefined/null values and ensure all are strings
-      const cleanDomains = domains.filter(domain => domain && typeof domain === 'string');
-      debugLog(1, `Clean domains found: ${cleanDomains.length}`, cleanDomains);
-      return [...new Set(cleanDomains)].sort();
+      spinner.fail('No domains found');
+      return [];
+    } catch (error) {
+      spinner.fail('Failed to fetch domains');
+      throw error;
     }
-    
-    return [];
   }
 
   async getEmailAccounts(domain) {
     debugLog(1, `Getting emails for domain: ${domain}`);
-    const response = await this.makeRequest('Email/list_pops', { regex: `@${domain}` });
     
-    debugLog(2, `Email API response for ${domain}:`, response.data?.slice(0, 3));
-    
-    if (response.status === 1 && response.data) {
-      // Filter to only include emails for this specific domain
-      const filteredEmails = response.data
-        .filter(account => account.email && account.email.endsWith(`@${domain}`))
-        .map(account => account.user || account.email.split('@')[0]);
+    try {
+      const response = await this.makeRequest('Email/list_pops', { regex: `@${domain}` });
       
-      debugLog(1, `Filtered emails for ${domain}: ${filteredEmails.length}`);
-      debugLog(3, `Email list for ${domain}:`, filteredEmails);
-      return filteredEmails;
+      debugLog(2, `Email API response for ${domain}:`, response.data?.slice(0, 3));
+      
+      if (response.status === 1 && response.data) {
+        // Filter to only include emails for this specific domain
+        const filteredEmails = response.data
+          .filter(account => account.email && account.email.endsWith(`@${domain}`))
+          .map(account => account.user || account.email.split('@')[0]);
+        
+        debugLog(1, `Filtered emails for ${domain}: ${filteredEmails.length}`);
+        debugLog(3, `Email list for ${domain}:`, filteredEmails);
+        return filteredEmails;
+      }
+      
+      return [];
+    } catch (error) {
+      debugLog(1, `Failed to get emails for ${domain}:`, error.message);
+      return [];
     }
-    
-    return [];
   }
 
   async getAllEmails(regexFilter = '') {
@@ -200,17 +220,29 @@ class CpanelAPI {
   }
 
   async getDomainsWithEmails() {
-    const domains = await this.getDomains();
-    const domainsWithEmails = [];
+    const spinner = ora('Analyzing domains with email accounts...').start();
+    
+    try {
+      const domains = await this.getDomains();
+      const domainsWithEmails = [];
 
-    for (const domain of domains) {
-      const emails = await this.getEmailAccounts(domain);
-      if (emails.length > 0) {
-        domainsWithEmails.push({ domain, emailCount: emails.length });
+      let processedCount = 0;
+      for (const domain of domains) {
+        processedCount++;
+        spinner.text = `Checking emails for domain ${processedCount}/${domains.length}: ${domain}`;
+        
+        const emails = await this.getEmailAccounts(domain);
+        if (emails.length > 0) {
+          domainsWithEmails.push({ domain, emailCount: emails.length });
+        }
       }
-    }
 
-    return domainsWithEmails;
+      spinner.succeed(`Found ${domainsWithEmails.length} domains with email accounts`);
+      return domainsWithEmails;
+    } catch (error) {
+      spinner.fail('Failed to analyze domains with emails');
+      throw error;
+    }
   }
 
   async resetEmailPassword(emailUser, domain, newPassword) {
@@ -223,15 +255,20 @@ class CpanelAPI {
     debugLog(2, `Resetting password for: ${fullEmail}`);
     debugLog(3, `Password reset parameters:`, { email: fullEmail, domain });
     
-    // passwd_pop uses GET method with query parameters, not POST
-    const response = await this.makeRequest('Email/passwd_pop', {
-      email: fullEmail,
-      password: newPassword,
-      domain
-    });
+    try {
+      // passwd_pop uses GET method with query parameters, not POST
+      const response = await this.makeRequest('Email/passwd_pop', {
+        email: fullEmail,
+        password: newPassword,
+        domain
+      });
 
-    debugLog(2, `Password reset response for ${fullEmail}:`, response);
-    return response.status === 1;
+      debugLog(2, `Password reset response for ${fullEmail}:`, response);
+      return response.status === 1;
+    } catch (error) {
+      debugLog(1, `Password reset failed for ${fullEmail}:`, error.message);
+      throw error;
+    }
   }
 }
 
@@ -435,7 +472,6 @@ export async function cpanelBulkReset(options = {}) {
   }
 
   // Step 3: Get domains with email accounts and let user select
-  printColor('blue', 'Fetching domains with email accounts...');
   const domainsWithEmails = await api.getDomainsWithEmails();
 
   if (domainsWithEmails.length === 0) {
@@ -468,11 +504,16 @@ export async function cpanelBulkReset(options = {}) {
   // Step 5: Get CSV filename
   const csvFile = await getCSVFilename(options);
   
-  // Ensure results directory exists
-  const resultsDir = path.dirname(csvFile);
-  await fs.ensureDir(resultsDir);
-
-  printColor('green', `\nResults will be saved to: ${csvFile}`);
+  // Ensure results directory exists with spinner
+  const dirSpinner = ora('Preparing results directory...').start();
+  try {
+    const resultsDir = path.dirname(csvFile);
+    await fs.ensureDir(resultsDir);
+    dirSpinner.succeed(`Results will be saved to: ${csvFile}`);
+  } catch (error) {
+    dirSpinner.fail('Failed to create results directory');
+    throw error;
+  }
 
   // Confirm before proceeding
   const { proceed } = await inquirer.prompt([
@@ -503,43 +544,55 @@ export async function cpanelBulkReset(options = {}) {
   });
 
   const results = [];
+  let totalEmails = 0;
+  let processedEmails = 0;
+
+  // Calculate total emails to process
+  for (const domain of selectedDomains) {
+    const emailAccounts = await api.getEmailAccounts(domain);
+    totalEmails += emailAccounts.length;
+  }
+
+  // Create main progress spinner
+  const mainSpinner = ora(`Starting password reset process (0/${totalEmails} emails processed)`).start();
 
   // Process each selected domain
-  printColor('blue', '\n=== Starting Password Reset Process ===');
-  
   for (const domain of selectedDomains) {
-    printColor('cyan', `\nProcessing domain: ${domain}`);
+    mainSpinner.text = `Processing domain: ${domain}`;
+    debugLog(1, `Processing domain: ${domain}`);
 
     const emailAccounts = await api.getEmailAccounts(domain);
 
     if (emailAccounts.length === 0) {
-      printColor('yellow', `  No email accounts found for ${domain}`);
+      debugLog(1, `No email accounts found for ${domain}`);
       continue;
     }
 
     for (const emailUser of emailAccounts) {
       const password = useRandom ? generatePassword(12) : newPassword;
+      const fullEmail = `${emailUser}@${domain}`;
 
-      printColor('blue', `  Resetting password for: ${emailUser}@${domain}`);
+      processedEmails++;
+      mainSpinner.text = `Resetting password for: ${fullEmail} (${processedEmails}/${totalEmails})`;
 
       try {
         const success = await api.resetEmailPassword(emailUser, domain, password);
 
         if (success) {
-          printColor('green', '    ✅ Success');
+          debugLog(1, `✅ Success: ${fullEmail}`);
           results.push({
             domain,
-            email: `${emailUser}@${domain}`,
+            email: fullEmail,
             oldPasswordStatus: 'N/A',
             newPassword: password,
             resetStatus: 'SUCCESS',
             timestamp: new Date().toISOString()
           });
         } else {
-          printColor('red', '    ❌ Failed');
+          debugLog(1, `❌ Failed: ${fullEmail}`);
           results.push({
             domain,
-            email: `${emailUser}@${domain}`,
+            email: fullEmail,
             oldPasswordStatus: 'N/A',
             newPassword: password,
             resetStatus: 'FAILED',
@@ -547,10 +600,10 @@ export async function cpanelBulkReset(options = {}) {
           });
         }
       } catch (error) {
-        printColor('red', `    ❌ Failed: ${error.message}`);
+        debugLog(1, `❌ Failed: ${fullEmail} - ${error.message}`);
         results.push({
           domain,
-          email: `${emailUser}@${domain}`,
+          email: fullEmail,
           oldPasswordStatus: 'N/A',
           newPassword: password,
           resetStatus: 'FAILED',
@@ -560,15 +613,24 @@ export async function cpanelBulkReset(options = {}) {
     }
   }
 
-  // Write results to CSV
-  await csvWriter.writeRecords(results);
+  mainSpinner.succeed(`Password reset process completed (${processedEmails}/${totalEmails} emails processed)`);
+
+  // Write results to CSV with spinner
+  const csvSpinner = ora('Saving results to CSV file...').start();
+  try {
+    await csvWriter.writeRecords(results);
+    csvSpinner.succeed(`Results saved to: ${csvFile}`);
+  } catch (error) {
+    csvSpinner.fail('Failed to save results to CSV');
+    throw error;
+  }
 
   // Show summary
   const successCount = results.filter(r => r.resetStatus === 'SUCCESS').length;
   const failedCount = results.filter(r => r.resetStatus === 'FAILED').length;
 
-  printColor('green', '\n=== Process Complete ===');
-  printColor('cyan', `Results saved to: ${csvFile}`);
+  console.log(''); // Add spacing
+  printColor('green', '=== Process Complete ===');
   printColor('green', `\nSummary:`);
   printColor('green', `  ✅ Successful resets: ${successCount}`);
   
