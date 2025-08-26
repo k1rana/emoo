@@ -3,7 +3,7 @@ import { spawn } from 'child_process';
 import csv from 'csv-parser';
 import { createReadStream } from 'fs';
 import fs from 'fs-extra';
-import ora from 'ora';
+import { Listr } from 'listr2';
 import path from 'path';
 
 /**
@@ -11,7 +11,7 @@ import path from 'path';
  */
 export class ImapService {
   constructor() {
-    this.spinner = null;
+    this.tasks = null;
   }
 
   /**
@@ -19,6 +19,21 @@ export class ImapService {
    */
   static toBool(value) {
     return value === '1' || value === 'true' || value === 'TRUE';
+  }
+
+  /**
+   * Helper function to redact passwords from command arguments for display
+   */
+  static redactPasswords(args) {
+    const redactedArgs = [...args];
+    for (let i = 0; i < redactedArgs.length; i++) {
+      if (redactedArgs[i] === '--password1' || redactedArgs[i] === '--password2') {
+        if (i + 1 < redactedArgs.length) {
+          redactedArgs[i + 1] = '***REDACTED***';
+        }
+      }
+    }
+    return redactedArgs;
   }
 
   /**
@@ -77,6 +92,9 @@ export class ImapService {
 
     // Base flags
     const flags = [];
+    
+    // Disable imapsync's own logging to prevent LOG_imapsync folder creation
+    flags.push('--nolog');
     
     // Add dry run flag only if explicitly requested
     if (options.dryRun) {
@@ -137,123 +155,106 @@ export class ImapService {
   }
 
   /**
-   * Run imapsync for one configuration
+   * Create a single sync task for listr2
    */
-  async runSingleSync(config, options = {}) {
+  createSyncTask(config, options = {}) {
     const {
       src_host: shost,
       src_user: suser,
+      dst_host: dhost,
       dst_user: duser
     } = config;
 
     // Skip empty or commented lines
     if (!shost || shost.startsWith('#')) {
-      return { success: true, skipped: true };
+      return null;
     }
 
-    console.log(chalk.blue(`Syncing: ${suser} -> ${duser}`));
+    const displayText = `${suser} (${shost}) -> ${duser} (${dhost})`;
 
-    const logDir = options.logDir || './results/sync-log';
-    await fs.ensureDir(logDir);
+    return {
+      title: displayText,
+      task: async (ctx, task) => {
+        const logDir = options.logDir || './results/sync-log';
+        await fs.ensureDir(logDir);
 
-    const logFile = this.generateLogFilePath(config, logDir);
-    const imapsyncArgs = this.buildImapsyncArgs(config, { ...options, logFile });
+        const logFile = this.generateLogFilePath(config, logDir);
+        const imapsyncArgs = this.buildImapsyncArgs(config, { ...options, logFile });
 
-    if (options.dryRun) {
-      console.log(chalk.yellow('DRY RUN - Command that would be executed:'));
-      if (options.docker) {
-        console.log(chalk.gray('docker run --rm gilleslamiral/imapsync imapsync'), imapsyncArgs.join(' '));
-      } else {
-        console.log(chalk.gray('imapsync'), imapsyncArgs.join(' '));
-      }
-      return { success: true, dryRun: true };
-    }
+        return new Promise((resolve, reject) => {
+          let command, args;
 
-    return new Promise((resolve) => {
-      let command, args;
+          if (options.docker) {
+            command = 'docker';
+            args = [
+              'run', '--rm',
+              '-e', 'IMAPSYNC_DEBUG=0',
+              'gilleslamiral/imapsync',
+              'imapsync',
+              ...imapsyncArgs
+            ];
+          } else {
+            command = 'imapsync';
+            args = imapsyncArgs;
+          }
 
-      if (options.docker) {
-        command = 'docker';
-        args = [
-          'run', '--rm',
-          '-e', 'IMAPSYNC_DEBUG=0',
-          'gilleslamiral/imapsync',
-          'imapsync',
-          ...imapsyncArgs
-        ];
-      } else {
-        command = 'imapsync';
-        args = imapsyncArgs;
-      }
+          // Show command in debug mode or dry run mode
+          if (options.debug || options.dryRun) {
+            const commandText = options.dryRun ? 'DRY RUN - Executing: ' : 'Running: ';
+            const redactedArgs = ImapService.redactPasswords(args);
+            const fullCommand = `${command} ${redactedArgs.join(' ')}`;
+            task.output = `${commandText}${fullCommand}`;
+            
+            // Also log to console in debug mode for visibility
+            if (options.debug) {
+              console.log(chalk.gray(`${commandText}${fullCommand}`));
+            }
+          }
 
-      console.log(chalk.gray(`Running: ${command} ${args.join(' ')}`));
+          const child = spawn(command, args);
+          
+          // Create log file stream
+          const logStream = fs.createWriteStream(logFile);
+          
+          child.stdout.pipe(logStream);
+          child.stderr.pipe(logStream);
+          
+          // Only show detailed output in debug mode
+          if (options.debug) {
+            child.stdout.on('data', (data) => {
+              task.output = data.toString();
+            });
+            
+            child.stderr.on('data', (data) => {
+              task.output = data.toString();
+            });
+          }
 
-      const child = spawn(command, args);
-      
-      // Create log file stream
-      const logStream = fs.createWriteStream(logFile);
-      
-      child.stdout.pipe(logStream);
-      child.stderr.pipe(logStream);
-      
-      // Also pipe to console if not in quiet mode
-      if (!options.quiet) {
-        child.stdout.on('data', (data) => {
-          process.stdout.write(data);
+          child.on('close', (code) => {
+            logStream.end();
+            
+            if (code === 0) {
+              if (options.dryRun) {
+                task.title = `🔍 DRY RUN completed: ${displayText}`;
+              } else {
+                task.title = `✅ Successfully synced: ${displayText}`;
+              }
+              resolve({ success: true, logFile, dryRun: options.dryRun });
+            } else {
+              const prefix = options.dryRun ? '🔍 DRY RUN failed: ' : '❌ Failed to sync: ';
+              task.title = `${prefix}${displayText} (exit code: ${code})`;
+              reject(new Error(`${prefix}${displayText} (exit code: ${code})`));
+            }
+          });
+
+          child.on('error', (error) => {
+            const prefix = options.dryRun ? '🔍 DRY RUN error: ' : '❌ Error running imapsync: ';
+            task.title = `${prefix}${error.message}`;
+            reject(new Error(`${prefix}${error.message}`));
+          });
         });
-        
-        child.stderr.on('data', (data) => {
-          process.stderr.write(data);
-        });
       }
-
-      child.on('close', (code) => {
-        logStream.end();
-        
-        if (code === 0) {
-          console.log(chalk.green(`✅ Successfully synced ${suser} -> ${duser}`));
-          resolve({ success: true, logFile });
-        } else {
-          console.log(chalk.red(`❌ Failed to sync ${suser} -> ${duser} (exit code: ${code})`));
-          resolve({ success: false, exitCode: code, logFile });
-        }
-      });
-
-      child.on('error', (error) => {
-        console.log(chalk.red(`❌ Error running imapsync: ${error.message}`));
-        resolve({ success: false, error: error.message });
-      });
-    });
-  }
-
-  /**
-   * Run multiple syncs in parallel
-   */
-  async runParallelSyncs(configs, options, maxJobs) {
-    const results = [];
-    const running = [];
-
-    for (let i = 0; i < configs.length; i++) {
-      const config = configs[i];
-      
-      // Wait if we have too many running jobs
-      while (running.length >= maxJobs) {
-        const completed = await Promise.race(running);
-        const index = running.indexOf(completed);
-        running.splice(index, 1);
-        results.push(await completed);
-      }
-
-      // Start new job
-      const job = this.runSingleSync(config, options);
-      running.push(job);
-    }
-
-    // Wait for remaining jobs
-    const remaining = await Promise.all(running);
-    results.push(...remaining);
-
-    return results;
+    };
   }
 
   /**
@@ -279,41 +280,65 @@ export class ImapService {
       }
 
       // Parse CSV
-      this.spinner = ora('Parsing CSV file...').start();
-      const configs = await this.parseCsvFile(csvFile);
-      this.spinner.succeed(`Found ${configs.length} configuration(s)`);
+      const tempSpinner = new Listr([
+        {
+          title: 'Parsing CSV file...',
+          task: async (ctx) => {
+            const configs = await this.parseCsvFile(csvFile);
+            if (configs.length === 0) {
+              throw new Error('No configurations found in CSV file');
+            }
+            ctx.configs = configs;
+          }
+        }
+      ]);
       
-      if (configs.length === 0) {
-        throw new Error('No configurations found in CSV file');
-      }
+      const context = await tempSpinner.run();
+      const configs = context.configs;
+      console.log(chalk.green(`✅ Found ${configs.length} configuration(s)`));
 
       if (options.dryRun) {
         console.log(chalk.yellow('\n🔍 DRY RUN MODE - No actual synchronization will be performed\n'));
       }
 
-      // Process configurations
-      let results;
-      if (jobs <= 1) {
-        // Sequential processing
-        console.log(chalk.blue('Running synchronizations sequentially...'));
-        results = [];
-        for (const config of configs) {
-          const result = await this.runSingleSync(config, options);
-          results.push(result);
+      // Create sync tasks
+      const syncTasks = configs
+        .map(config => this.createSyncTask(config, options))
+        .filter(task => task !== null); // Filter out skipped tasks
+
+      if (syncTasks.length === 0) {
+        console.log(chalk.yellow('No valid configurations to sync.'));
+        return { successful: 0, failed: 0, skipped: configs.length, dryRun: 0, total: configs.length };
+      }
+
+      // Create and run listr2 tasks
+      const taskList = new Listr(syncTasks, {
+        concurrent: jobs > 1 ? jobs : false,
+        exitOnError: false,
+        collectErrors: 'minimal',
+        rendererOptions: {
+          collapseErrors: false,
+          showErrorMessage: true,
+          persistentOutput: options.debug,
+          outputBar: options.debug ? Infinity : 0
         }
-      } else {
-        // Parallel processing
-        console.log(chalk.blue(`Running synchronizations with ${jobs} parallel jobs...`));
-        results = await this.runParallelSyncs(configs, options, jobs);
+      });
+
+      console.log(chalk.blue(`\n📊 Processing ${syncTasks.length} email accounts${jobs > 1 ? ` with ${jobs} parallel jobs` : ' sequentially'}\n`));
+
+      let results;
+      try {
+        results = await taskList.run();
+        console.log(chalk.green('\n✅ All sync tasks completed!'));
+      } catch (error) {
+        console.log(chalk.yellow('\n⚠️  Some sync tasks failed, but continuing with summary...'));
+        results = error.errors || [];
       }
 
       // Generate summary
-      return this.generateSummary(results, options);
+      return this.generateSummary(results, options, syncTasks.length);
 
     } catch (error) {
-      if (this.spinner) {
-        this.spinner.fail('Synchronization failed');
-      }
       throw error;
     }
   }
@@ -321,19 +346,22 @@ export class ImapService {
   /**
    * Generate synchronization summary
    */
-  generateSummary(results, options) {
-    const successful = results.filter(r => r.success && !r.skipped && !r.dryRun).length;
-    const failed = results.filter(r => !r.success && !r.skipped).length;
-    const skipped = results.filter(r => r.skipped).length;
-    const dryRun = results.filter(r => r.dryRun).length;
+  generateSummary(results, options, totalTasks) {
+    // Since listr2 handles errors differently, we need to count based on completed/failed tasks
+    const successful = Array.isArray(results) ? results.filter(r => r && r.success && !r.dryRun).length : 0;
+    const failed = totalTasks - successful;
+    const skipped = 0; // We filter out skipped tasks before creating the task list
+    const dryRun = Array.isArray(results) ? results.filter(r => r && r.dryRun).length : 0;
 
     console.log(chalk.green('\n=== Synchronization Summary ==='));
-    if (dryRun > 0) {
-      console.log(chalk.yellow(`Dry run commands shown: ${dryRun}`));
+    if (options.dryRun) {
+      console.log(chalk.yellow(`Dry run tasks: ${totalTasks}`));
     } else {
       console.log(chalk.green(`Successful: ${successful}`));
       console.log(chalk.red(`Failed: ${failed}`));
-      console.log(chalk.gray(`Skipped: ${skipped}`));
+      if (skipped > 0) {
+        console.log(chalk.gray(`Skipped: ${skipped}`));
+      }
     }
 
     if (options.logDir) {
@@ -345,7 +373,7 @@ export class ImapService {
       failed,
       skipped,
       dryRun,
-      total: results.length
+      total: totalTasks
     };
   }
 }

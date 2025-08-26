@@ -12,6 +12,7 @@ export default class Sync extends Command {
     '<%= config.bin %> <%= command.id %> --csv input/my-migration.csv',
     '<%= config.bin %> <%= command.id %> --dry-run --jobs 4',
     '<%= config.bin %> <%= command.id %> --docker --log-dir ./results/sync-log',
+    '<%= config.bin %> <%= command.id %> --debug --jobs 2',
   ]
 
   static flags = {
@@ -33,6 +34,9 @@ export default class Sync extends Command {
     }),
     'dry-run': Flags.boolean({
       description: 'Show what would be synced without actually syncing',
+    }),
+    debug: Flags.boolean({
+      description: 'Show detailed imapsync output and commands',
     }),
   }
 
@@ -157,6 +161,7 @@ export default class Sync extends Command {
         docker: flags.docker,
         logDir: flags['log-dir'],
         dryRun: flags['dry-run'],
+        debug: flags.debug,
       }
 
       const summary = await imapService.sync(options)

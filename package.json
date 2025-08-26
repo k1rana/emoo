@@ -33,6 +33,7 @@
     "csv-writer": "^1.6.0",
     "fs-extra": "^11.3.1",
     "inquirer": "^12.9.4",
+    "listr2": "^9.0.2",
     "ora": "^8.2.0"
   },
   "oclif": {
