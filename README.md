@@ -1,13 +1,17 @@
-# IMAP Migration CLI Tool
+<p align="center">
+  <img src="logo.png" alt="emoo - emo cow logo" width="200"/>
+</p>
 
-CLI tool for IMAP email migration and cPanel bulk operations, rewritten from bash scripts to Node.js.
+# emoo 🐄
+
+_CLI tool for IMAP email migration and cPanel bulk operations_
 
 ## Installation
 
 ```bash
 # Clone repository
 git clone <repository-url>
-cd migrate-imap
+cd emoo
 
 # Install dependencies
 pnpm install
@@ -161,7 +165,7 @@ This tool is a rewrite from bash scripts:
 ## Directory Structure
 
 ```
-migrate-imap/
+emoo/
 ├── bin/cli.js          # Main CLI entry point
 ├── src/
 │   ├── cpanel-bulk.js  # cPanel bulk operations

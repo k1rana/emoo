@@ -1,11 +1,11 @@
 {
-  "name": "migrate-imap",
+  "name": "emoo",
   "version": "1.0.0",
   "description": "CLI tool for IMAP email migration and cPanel bulk operations",
   "type": "module",
   "main": "index.js",
   "bin": {
-    "migrate-imap": "./bin/cli.js"
+    "emoo": "./bin/cli.js"
   },
   "scripts": {
     "start": "node bin/cli.js",
