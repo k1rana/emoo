@@ -233,6 +233,10 @@ Make sure the CSV file:
 - Required columns are available
 - No empty rows in the middle of data
 
+## Disclaimer
+
+⚠️ **Use at your own risk!** Always backup your data before using emoo, test in development environment first, and make sure you have permission to access the email accounts. Authors are not responsible for any data loss or issues.
+
 ## License
 
-ISC License
+This project is licensed under the ISC License - see the [LICENSE](LICENSE) file for details.
