@@ -1,0 +1,39 @@
+# Development files
+.idea
+.DS_Store
+*.log
+
+# Dependencies
+node_modules/
+
+# Input/output directories (containing example/test data)
+input/
+results/
+
+# Development scripts
+bin/dev.js
+bin/dev.cmd
+
+# Git
+.git/
+.gitignore
+
+# Other
+*.md~
+*.swp
+*.swo
+
+# Testing
+test/
+tests/
+__tests__/
+coverage/
+
+# CI/CD
+.github/
+.travis.yml
+.circleci/
+
+# Editor
+.vscode/
+.editorconfig

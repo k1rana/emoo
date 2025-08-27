@@ -11,7 +11,9 @@
     "build": "echo 'No build needed for JS'",
     "start": "./bin/run.js",
     "dev": "./bin/dev.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node bin/run.js --help",
+    "prepublishOnly": "npm run test",
+    "release": "release-it"
   },
   "keywords": [
     "imap",
@@ -21,8 +23,33 @@
     "bulk",
     "cli"
   ],
-  "author": "",
+  "author": {
+    "name": "Farhan Brillan Widyakirana",
+    "email": "fbrillanw@gmail.com",
+    "url": "https://github.com/k1rana"
+  },
   "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/k1rana/emoo.git"
+  },
+  "bugs": {
+    "url": "https://github.com/k1rana/emoo/issues"
+  },
+  "homepage": "https://github.com/k1rana/emoo#readme",
+  "files": [
+    "bin/",
+    "src/",
+    "README.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "packageManager": "pnpm@10.8.0",
   "dependencies": {
     "@oclif/core": "^4.5.2",
@@ -47,6 +74,7 @@
   },
   "devDependencies": {
     "@types/node": "^18",
+    "release-it": "^19.0.4",
     "ts-node": "^10.9.2"
   }
 }

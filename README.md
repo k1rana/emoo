@@ -4,7 +4,7 @@
 
 # emoo 🐄
 
-_CLI tool for IMAP email migration and cPanel bulk operations_
+_CLI tool for IMAP email migration and cPanel email bulk operations_
 
 ## Installation
 
@@ -17,7 +17,7 @@ cd emoo
 pnpm install
 
 # Install globally for easier access
-pnpm install -g .
+pnpm install -g emoo
 ```
 
 ## Usage
@@ -43,7 +43,7 @@ This feature allows bulk email operations in cPanel including password reset and
 emoo cpanel reset
 ```
 
-#### Password Reset - Command Line Mode
+#### Bulk Email Password Reset by Domain
 
 ```bash
 # With all parameters
@@ -147,32 +147,17 @@ mail.old.com,user2@old.com,pass2,mail.new.com,user2@new.com,pass2,143,143,0,0,PL
 
 ## Features
 
-### Migration from Bash Scripts
+### cPanel Tools Features
 
-This tool is a rewrite from bash scripts:
-
-- `cpanel-email-bulk` → `emoo cpanel reset`
-- `sync` → `emoo sync`
-
-### cPanel Features
-
-- ✅ Auto-detect authentication method (cpanel/basic/uapi-token)
-- ✅ Interactive domain selection
-- ✅ Bulk password reset
-- ✅ Bulk email creation
-- ✅ Random password generation
-- ✅ CSV export with timestamp
-- ✅ Progress indicators and colored output
+- Auto-detect authentication method (cpanel/basic/uapi-token)
+- Bulk email accounts password reset (including random password generation)
+- Bulk email creation
+- All result in CSV format
 
 ### IMAP Sync Features
 
-- ✅ CSV-based configuration
-- ✅ Sequential and parallel processing
-- ✅ Docker support for imapsync
-- ✅ Dry-run mode
-- ✅ Detailed logging
-- ✅ SSL/TLS support
-- ✅ Custom authentication mechanisms
+- CSV-based configuration
+- Docker support for imapsync
 
 ## Dependencies
 
