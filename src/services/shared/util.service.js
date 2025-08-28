@@ -62,16 +62,16 @@ export class UtilService {
       });
     }
 
-    // API Key input
+    // API Key/Password input
     if (!options.apiKey) {
       questions.push({
         type: 'password',
         name: 'apiKey',
-        message: 'Enter cPanel API key:',
+        message: 'Enter cPanel API Token or Password:',
         mask: '*',
         validate: (input) => {
           if (!input.trim()) {
-            return 'API key cannot be empty';
+            return 'API Token or Password cannot be empty';
           }
           return true;
         }

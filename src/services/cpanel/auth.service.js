@@ -39,8 +39,7 @@ export class CpanelService {
     
     const methods = [
       { name: 'cpanel', headers: { 'Authorization': `cpanel ${this.username}:${this.apiKey}` } },
-      { name: 'basic', auth: { username: this.username, password: this.apiKey } },
-      { name: 'uapi-token', headers: { 'Authorization': `uapi-token ${this.username}:${this.apiKey}` } }
+      { name: 'basic', auth: { username: this.username, password: this.apiKey } }
     ];
 
     for (const method of methods) {
@@ -85,9 +84,6 @@ export class CpanelService {
       case 'basic':
         config.auth = { username: this.username, password: this.apiKey };
         break;
-      case 'uapi-token':
-        config.headers = { 'Authorization': `uapi-token ${this.username}:${this.apiKey}` };
-        break;
       default:
         config.headers = { 'Authorization': `cpanel ${this.username}:${this.apiKey}` };
     }
@@ -109,9 +105,6 @@ export class CpanelService {
     switch (this.authMethod) {
       case 'basic':
         config.auth = { username: this.username, password: this.apiKey };
-        break;
-      case 'uapi-token':
-        config.headers = { 'Authorization': `uapi-token ${this.username}:${this.apiKey}` };
         break;
       default:
         config.headers = { 'Authorization': `cpanel ${this.username}:${this.apiKey}` };

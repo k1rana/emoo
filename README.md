@@ -109,13 +109,13 @@ emoo sync --dry-run --csv input/example.csv
 emoo sync --docker --csv input/example.csv
 
 # Parallel processing with 4 jobs
-emoo sync --jobs 4 --csv input/example.csv
+emoo sync --parallel 4 --csv input/example.csv
 ```
 
 #### Options
 
 - `-c, --csv <file>`: CSV file containing sync configuration (default: "input/example.csv")
-- `-j, --jobs <number>`: Number of parallel jobs (default: "1")
+- `-j, --parallel <number>`: Number of parallel jobs (default: "1")
 - `--docker`: Use Docker for imapsync
 - `--log-dir <dir>`: Directory for log files (default: "./results")
 - `--dry-run`: Preview commands without execution
@@ -194,7 +194,7 @@ emoo cpanel create \
 # Migrate 10 accounts in parallel using Docker
 emoo sync \
   --csv input/migration-batch1.csv \
-  --jobs 10 \
+  --parallel 10 \
   --docker \
   --log-dir ./logs/batch1
 ```
@@ -217,11 +217,10 @@ emoo sync --docker
 
 ### cPanel API Authentication Issues
 
-The tool will automatically try 3 authentication methods:
+The tool will automatically try 2 authentication methods:
 
 1. cPanel auth (`Authorization: cpanel username:apikey`)
 2. Basic auth (`Authorization: Basic`)
-3. UAPI token (`Authorization: uapi-token username:token`)
 
 ### CSV Format Issues
 
