@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import csv from 'csv-parser';
 import { createReadStream } from 'fs';
 import fs from 'fs-extra';
+import inquirer from 'inquirer';
 import { Listr } from 'listr2';
 import path from 'path';
 
@@ -288,6 +289,47 @@ export class ImapService {
   }
 
   /**
+   * Interactive email selection from CSV configurations
+   */
+  async selectEmailsInteractively(configs) {
+    if (configs.length === 0) {
+      return [];
+    }
+
+    console.log(chalk.blue('\n📧 Select emails to sync:'));
+    console.log(chalk.gray('Use SPACE to select/deselect, ENTER to confirm'));
+    console.log(chalk.gray('Press "a" to select all, "i" to invert selection\n'));
+
+    const choices = configs.map((config, index) => {
+      const { src_user, src_host, dst_user, dst_host } = config;
+      return {
+        name: `${src_user} (${src_host}) → ${dst_user} (${dst_host})`,
+        value: index,
+        checked: false
+      };
+    });
+
+    const answer = await inquirer.prompt([
+      {
+        type: 'checkbox',
+        name: 'selectedEmails',
+        message: 'Choose emails to sync:',
+        choices: choices,
+        pageSize: 15,
+        loop: false,
+        validate: (input) => {
+          if (input.length === 0) {
+            return 'Please select at least one email to sync.';
+          }
+          return true;
+        }
+      }
+    ]);
+
+    return answer.selectedEmails.map(index => configs[index]);
+  }
+
+  /**
    * Main synchronization method
    */
   async sync(options = {}) {
@@ -324,8 +366,18 @@ export class ImapService {
       ]);
       
       const context = await tempSpinner.run();
-      const configs = context.configs;
+      let configs = context.configs;
       console.log(chalk.green(`✅ Found ${configs.length} configuration(s)`));
+
+      // Interactive email selection (unless --all flag is provided)
+      if (!options.all && !options.skipSelection) {
+        configs = await this.selectEmailsInteractively(configs);
+        if (configs.length === 0) {
+          console.log(chalk.yellow('No emails selected. Exiting...'));
+          return { successful: 0, failed: 0, skipped: 0, dryRun: 0, total: 0 };
+        }
+        console.log(chalk.green(`📋 Selected ${configs.length} email(s) for sync`));
+      }
 
       if (options.dryRun) {
         console.log(chalk.yellow('\n🔍 DRY RUN MODE - No actual synchronization will be performed\n'));

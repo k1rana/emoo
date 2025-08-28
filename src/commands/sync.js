@@ -10,6 +10,7 @@ export default class Sync extends Command {
   static examples = [
     '<%= config.bin %> <%= command.id %>',
     '<%= config.bin %> <%= command.id %> --csv input/my-migration.csv',
+    '<%= config.bin %> <%= command.id %> --csv input/sync/emails.csv --all',
     '<%= config.bin %> <%= command.id %> --dry-run --parallel 4',
     '<%= config.bin %> <%= command.id %> --docker --log-dir ./results/sync-log',
     '<%= config.bin %> <%= command.id %> --debug --parallel 2',
@@ -37,6 +38,13 @@ export default class Sync extends Command {
     }),
     debug: Flags.boolean({
       description: 'Show detailed imapsync output and commands',
+    }),
+    all: Flags.boolean({
+      char: 'a',
+      description: 'Sync all emails from CSV without interactive selection',
+    }),
+    'skip-selection': Flags.boolean({
+      description: 'Skip interactive email selection (same as --all)',
     }),
   }
 
@@ -162,14 +170,11 @@ export default class Sync extends Command {
         logDir: flags['log-dir'],
         dryRun: flags['dry-run'],
         debug: flags.debug,
+        all: flags.all,
+        skipSelection: flags['skip-selection'],
       }
 
       const summary = await imapService.sync(options)
-      
-      // Show parallel processing summary
-      if (parseInt(flags.parallel, 10) > 1) {
-        console.log(`🚀 Processed with ${flags.parallel} parallel jobs`)
-      }
       
       // Exit with error code if any operations failed
       if (summary.failed > 0 && !summary.dryRun) {
