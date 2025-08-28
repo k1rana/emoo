@@ -1,6 +1,6 @@
 import chalk from 'chalk';
-import inquirer from 'inquirer';
 import fs from 'fs-extra';
+import inquirer from 'inquirer';
 import path from 'path';
 
 // Utility functions
@@ -157,6 +157,30 @@ export class UtilService {
         filter: (input) => {
           if (!input.trim()) {
             return defaultFilename;
+          }
+          return input.endsWith('.csv') ? input : `${input}.csv`;
+        }
+      }
+    ]);
+
+    return path.join('./results', filename);
+  }
+
+  // Get CSV filename with custom default
+  static async getCSVFilenameWithCustomDefault(options, customDefault) {
+    if (options.output) {
+      return options.output;
+    }
+
+    const { filename } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'filename',
+        message: 'Enter CSV filename (will be saved to ./results/):',
+        default: customDefault,
+        filter: (input) => {
+          if (!input.trim()) {
+            return customDefault;
           }
           return input.endsWith('.csv') ? input : `${input}.csv`;
         }

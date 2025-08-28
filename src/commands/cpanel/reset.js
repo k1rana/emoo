@@ -1,11 +1,11 @@
-import {Command, Flags} from '@oclif/core'
-import { CpanelService } from '../../services/cpanel/auth.service.js'
-import { DomainService, setDebugLevel as setDomainDebugLevel } from '../../services/cpanel/domain.service.js'
-import { EmailService, setDebugLevel as setEmailDebugLevel } from '../../services/cpanel/email.service.js'
-import { UtilService } from '../../services/shared/util.service.js'
-import { setDebugLevel as setCpanelDebugLevel } from '../../services/cpanel/auth.service.js'
+import { Command, Flags } from '@oclif/core'
 import { createObjectCsvWriter } from 'csv-writer'
 import ora from 'ora'
+import { CpanelService, setDebugLevel as setCpanelDebugLevel } from '../../services/cpanel/auth.service.js'
+import { DomainService, setDebugLevel as setDomainDebugLevel } from '../../services/cpanel/domain.service.js'
+import { EmailService, setDebugLevel as setEmailDebugLevel } from '../../services/cpanel/email.service.js'
+import { ParallelService } from '../../services/shared/parallel.service.js'
+import { UtilService } from '../../services/shared/util.service.js'
 
 export default class CpanelReset extends Command {
   static description = 'Reset passwords for cPanel email accounts in bulk'
@@ -14,6 +14,7 @@ export default class CpanelReset extends Command {
     '<%= config.bin %> <%= command.id %>',
     '<%= config.bin %> <%= command.id %> --server cpanel.example.com --username admin --api-key your-key',
     '<%= config.bin %> <%= command.id %> --password newpass123 --output ./results/reset.csv',
+    '<%= config.bin %> <%= command.id %> --parallel 5 --debug',
   ]
 
   static flags = {
@@ -39,6 +40,11 @@ export default class CpanelReset extends Command {
     }),
     regex: Flags.string({
       description: 'Filter emails using regex pattern',
+    }),
+    parallel: Flags.string({
+      char: 'j',
+      description: 'Number of parallel jobs for password reset',
+      default: '3',
     }),
     debug: Flags.boolean({
       description: 'Enable debug mode',
@@ -72,8 +78,8 @@ export default class CpanelReset extends Command {
       // Step 3: Validate connection
       await cpanelService.validateConnection()
 
-      // Step 4: Get domains and select
-      const domainsWithEmails = await domainService.getDomainsWithEmails()
+      // Step 4: Get domains and select (with parallel scanning)
+      const domainsWithEmails = await domainService.getDomainsWithEmailsParallel(parseInt(flags.parallel, 10))
       
       if (domainsWithEmails.length === 0) {
         throw new Error('No domains with email accounts found!')
@@ -96,8 +102,25 @@ export default class CpanelReset extends Command {
         password: flags.password
       })
 
-      // Step 6: Get CSV filename
-      const csvFile = await UtilService.getCSVFilename({ output: flags.output }, 'password_reset')
+      // Step 6: Get CSV filename with domain, action and Unix timestamp
+      const generateDefaultFilename = (domains, action = 'email_pass_reset') => {
+        const timestamp = Math.floor(Date.now() / 1000) // Unix timestamp
+        const domainList = domains.length === 1 
+          ? domains[0] 
+          : domains.length <= 3 
+            ? domains.join('-') 
+            : `${domains.length}domains`
+        
+        // Sanitize domain names for filename
+        const sanitizedDomain = domainList.replace(/[^a-zA-Z0-9-_.]/g, '_')
+        
+        return `${sanitizedDomain}_${action}_${timestamp}.csv`
+      }
+
+      const csvFile = flags.output || await UtilService.getCSVFilenameWithCustomDefault(
+        { output: flags.output }, 
+        generateDefaultFilename(selectedDomains, 'email_pass_reset')
+      )
       
       // Ensure results directory exists
       const dirSpinner = ora('Preparing results directory...').start()
@@ -116,7 +139,7 @@ export default class CpanelReset extends Command {
         return
       }
 
-      // Step 8: Process reset
+      // Step 8: Process reset with enhanced parallel processing
       const csvWriter = createObjectCsvWriter({
         path: csvFile,
         header: [
@@ -129,55 +152,77 @@ export default class CpanelReset extends Command {
         ]
       })
 
-      const results = []
-      let totalEmails = 0
-      let processedEmails = 0
+      const parallelJobs = parseInt(flags.parallel, 10)
+      const parallelService = new ParallelService({
+        concurrency: parallelJobs,
+        exitOnError: false,
+        debug: flags.debug
+      })
 
-      // Calculate total emails
-      for (const domain of selectedDomains) {
-        const emailAccounts = await domainService.getEmailAccounts(domain)
-        totalEmails += emailAccounts.length
+      // Scan function to get email accounts for each domain
+      const scanDomainForEmails = async (domain) => {
+        const emails = await domainService.getEmailAccounts(domain)
+        return { domain, emails, count: emails.length }
       }
 
-      const mainSpinner = ora(`Starting password reset process (0/${totalEmails} emails processed)`).start()
+      // Process function to reset password for each email
+      const resetPasswordForEmail = async (emailData) => {
+        const { domain, emailUser } = emailData
+        const password = useRandom ? UtilService.generatePassword(12) : newPassword
+        const fullEmail = `${emailUser}@${domain}`
 
-      // Process each domain
-      for (const domain of selectedDomains) {
-        mainSpinner.text = `Processing domain: ${domain}`
-        const emailAccounts = await domainService.getEmailAccounts(domain)
-
-        for (const emailUser of emailAccounts) {
-          const password = useRandom ? UtilService.generatePassword(12) : newPassword
-          const fullEmail = `${emailUser}@${domain}`
-
-          processedEmails++
-          mainSpinner.text = `Resetting password for: ${fullEmail} (${processedEmails}/${totalEmails})`
-
-          try {
-            const success = await emailService.resetPassword(emailUser, domain, password)
-
-            results.push({
-              domain,
-              email: fullEmail,
-              oldPasswordStatus: 'N/A',
-              newPassword: password,
-              resetStatus: success ? 'SUCCESS' : 'FAILED',
-              timestamp: new Date().toISOString()
-            })
-          } catch (error) {
-            results.push({
-              domain,
-              email: fullEmail,
-              oldPasswordStatus: 'N/A',
-              newPassword: password,
-              resetStatus: 'FAILED',
-              timestamp: new Date().toISOString()
-            })
+        try {
+          const success = await emailService.resetPassword(emailUser, domain, password)
+          return {
+            domain,
+            email: fullEmail,
+            oldPasswordStatus: 'N/A',
+            newPassword: password,
+            resetStatus: success ? 'SUCCESS' : 'FAILED',
+            timestamp: new Date().toISOString()
+          }
+        } catch (error) {
+          return {
+            domain,
+            email: fullEmail,
+            oldPasswordStatus: 'N/A',
+            newPassword: password,
+            resetStatus: 'FAILED',
+            timestamp: new Date().toISOString(),
+            error: error.message
           }
         }
       }
 
-      mainSpinner.succeed(`Password reset process completed (${processedEmails}/${totalEmails} emails processed)`)
+      // Extract email items from scan results
+      const extractEmailsFromScanResult = (domain, scanResult) => {
+        if (scanResult.error || !scanResult.emails) {
+          return []
+        }
+        return scanResult.emails.map(emailUser => ({ domain, emailUser }))
+      }
+
+      // Execute the parallel workflow
+      const workflowResults = await parallelService.createScanAndProcessWorkflow(
+        selectedDomains,
+        scanDomainForEmails,
+        resetPasswordForEmail,
+        {
+          concurrency: parallelJobs,
+          scanTitle: 'Scanning domains for email accounts',
+          processTitle: 'Resetting email passwords',
+          extractItemsFromScanResult: extractEmailsFromScanResult,
+          getTitleForProcess: (emailData) => `Reset ${emailData.emailUser}@${emailData.domain}`,
+          progressCallback: (result, index, total) => {
+            if (flags.debug) {
+              const status = result.resetStatus === 'SUCCESS' ? '✅' : '❌'
+              console.log(`${status} ${result.email} (${index + 1}/${total})`)
+            }
+          }
+        }
+      )
+
+      const results = workflowResults.processResults || []
 
       // Save results
       const csvSpinner = ora('Saving results to CSV file...').start()
@@ -189,21 +234,29 @@ export default class CpanelReset extends Command {
         throw error
       }
 
-      // Show summary
-      const successCount = results.filter(r => r.resetStatus === 'SUCCESS').length
-      const failedCount = results.filter(r => r.resetStatus === 'FAILED').length
+      // Generate and show summary using parallel service
+      const summary = parallelService.generateSummary(results, { printSummary: false })
 
       console.log('')
       UtilService.printColor('green', '=== Process Complete ===')
       UtilService.printColor('green', `\nSummary:`)
-      UtilService.printColor('green', `  ✅ Successful resets: ${successCount}`)
+      UtilService.printColor('green', `  📊 Total emails processed: ${summary.total}`)
+      UtilService.printColor('green', `  ✅ Successful resets: ${summary.successful}`)
       
-      if (failedCount > 0) {
-        UtilService.printColor('red', `  ❌ Failed resets: ${failedCount}`)
+      if (summary.failed > 0) {
+        UtilService.printColor('red', `  ❌ Failed resets: ${summary.failed}`)
       }
 
-      if (useRandom && successCount > 0) {
+      if (summary.skipped > 0) {
+        UtilService.printColor('yellow', `  ⏭️  Skipped: ${summary.skipped}`)
+      }
+
+      if (useRandom && summary.successful > 0) {
         UtilService.printColor('yellow', '  📝 Random passwords generated - check CSV file for details')
+      }
+
+      if (parallelJobs > 1) {
+        UtilService.printColor('cyan', `  🚀 Processed with ${parallelJobs} parallel jobs`)
       }
 
       UtilService.printColor('cyan', '\nThank you for using emoo! 🐄')

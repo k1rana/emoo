@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import inquirer from 'inquirer';
+import { Listr } from 'listr2';
 import ora from 'ora';
 
 // Global debug level
@@ -107,6 +108,44 @@ export class DomainService {
     }
     
     return [];
+  }
+
+  async getDomainsWithEmailsParallel(parallelJobs = 3) {
+    const domains = await this.getDomains();
+    
+    if (domains.length === 0) {
+      return [];
+    }
+
+    const tasks = new Listr([
+      {
+        title: 'Analyzing domains with email accounts in parallel',
+        task: async (ctx, task) => {
+          const domainTasks = domains.map(domain => ({
+            title: `Checking ${domain}`,
+            task: async (subCtx, subTask) => {
+              try {
+                const emails = await this.getEmailAccounts(domain);
+                if (emails.length > 0) {
+                  ctx.domainsWithEmails = ctx.domainsWithEmails || [];
+                  ctx.domainsWithEmails.push({ domain, emailCount: emails.length });
+                  subTask.title = `Checking ${domain} (${emails.length} emails found)`;
+                } else {
+                  subTask.skip(`${domain} has no email accounts`);
+                }
+              } catch (error) {
+                subTask.skip(`Failed to check ${domain}: ${error.message}`);
+              }
+            }
+          }));
+
+          return task.newListr(domainTasks, { concurrent: parallelJobs });
+        }
+      }
+    ], { concurrent: false });
+
+    const context = await tasks.run();
+    return context.domainsWithEmails || [];
   }
 
   async getDomainsWithEmails() {

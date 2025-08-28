@@ -10,9 +10,9 @@ export default class Sync extends Command {
   static examples = [
     '<%= config.bin %> <%= command.id %>',
     '<%= config.bin %> <%= command.id %> --csv input/my-migration.csv',
-    '<%= config.bin %> <%= command.id %> --dry-run --jobs 4',
+    '<%= config.bin %> <%= command.id %> --dry-run --parallel 4',
     '<%= config.bin %> <%= command.id %> --docker --log-dir ./results/sync-log',
-    '<%= config.bin %> <%= command.id %> --debug --jobs 2',
+    '<%= config.bin %> <%= command.id %> --debug --parallel 2',
   ]
 
   static flags = {
@@ -20,7 +20,7 @@ export default class Sync extends Command {
       char: 'c',
       description: 'CSV file containing sync configurations (will prompt if not provided)',
     }),
-    jobs: Flags.string({
+    parallel: Flags.string({
       char: 'j',
       description: 'Number of parallel jobs',
       default: '1',
@@ -157,7 +157,7 @@ export default class Sync extends Command {
       // Map flags to options format expected by the service
       const options = {
         csv: csvFile,
-        jobs: flags.jobs,
+        jobs: parseInt(flags.parallel, 10) || 1,
         docker: flags.docker,
         logDir: flags['log-dir'],
         dryRun: flags['dry-run'],
@@ -165,6 +165,11 @@ export default class Sync extends Command {
       }
 
       const summary = await imapService.sync(options)
+      
+      // Show parallel processing summary
+      if (parseInt(flags.parallel, 10) > 1) {
+        console.log(`🚀 Processed with ${flags.parallel} parallel jobs`)
+      }
       
       // Exit with error code if any operations failed
       if (summary.failed > 0 && !summary.dryRun) {

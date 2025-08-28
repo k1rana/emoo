@@ -8,6 +8,7 @@ import ora from 'ora'
 import { CpanelService, setDebugLevel as setCpanelDebugLevel } from '../../services/cpanel/auth.service.js'
 import { DomainService, setDebugLevel as setDomainDebugLevel } from '../../services/cpanel/domain.service.js'
 import { EmailService, setDebugLevel as setEmailDebugLevel } from '../../services/cpanel/email.service.js'
+import { ParallelService } from '../../services/shared/parallel.service.js'
 import { UtilService } from '../../services/shared/util.service.js'
 
 export default class CpanelCreate extends Command {
@@ -17,6 +18,7 @@ export default class CpanelCreate extends Command {
     '<%= config.bin %> <%= command.id %>',
     '<%= config.bin %> <%= command.id %> --csv input/batch-create-example.csv',
     '<%= config.bin %> <%= command.id %> --server cpanel.example.com --username admin --api-key your-key',
+    '<%= config.bin %> <%= command.id %> --parallel 5 --debug',
   ]
 
   static flags = {
@@ -48,6 +50,11 @@ export default class CpanelCreate extends Command {
     output: Flags.string({
       char: 'o',
       description: 'Output CSV file path',
+    }),
+    parallel: Flags.string({
+      char: 'j',
+      description: 'Number of parallel jobs for account creation',
+      default: '3',
     }),
     debug: Flags.boolean({
       description: 'Enable debug mode',
@@ -262,8 +269,26 @@ export default class CpanelCreate extends Command {
 
       const defaultQuota = parseInt(flags.quota)
 
-      // Step 7: Get CSV filename
-      const csvFile = await UtilService.getCSVFilename({ output: flags.output }, 'batch_create')
+      // Step 7: Get CSV filename with domains, action and Unix timestamp
+      const generateDefaultFilename = (emails, action = 'batch_create') => {
+        const timestamp = Math.floor(Date.now() / 1000) // Unix timestamp
+        const uniqueDomains = [...new Set(emails.map(e => e.domain))]
+        const domainList = uniqueDomains.length === 1 
+          ? uniqueDomains[0] 
+          : uniqueDomains.length <= 3 
+            ? uniqueDomains.join('-') 
+            : `${uniqueDomains.length}domains`
+        
+        // Sanitize domain names for filename
+        const sanitizedDomain = domainList.replace(/[^a-zA-Z0-9-_.]/g, '_')
+        
+        return `${sanitizedDomain}_${action}_${timestamp}.csv`
+      }
+
+      const csvFile = flags.output || await UtilService.getCSVFilenameWithCustomDefault(
+        { output: flags.output }, 
+        generateDefaultFilename(emails, 'batch_create')
+      )
       await UtilService.ensureResultsDir(csvFile)
 
       // Step 8: Confirm action
@@ -273,7 +298,7 @@ export default class CpanelCreate extends Command {
         return
       }
 
-      // Step 9: Process creation
+      // Step 9: Process creation with parallel processing
       const csvWriter = createObjectCsvWriter({
         path: csvFile,
         header: [
@@ -287,23 +312,22 @@ export default class CpanelCreate extends Command {
         ]
       })
 
-      const results = []
-      const totalEmails = emails.length
-      let processedEmails = 0
+      const parallelJobs = parseInt(flags.parallel, 10)
+      const parallelService = new ParallelService({
+        concurrency: parallelJobs,
+        exitOnError: false,
+        debug: flags.debug
+      })
 
-      const mainSpinner = ora(`Starting email creation process (0/${totalEmails} emails processed)`).start()
-
-      for (const emailInfo of emails) {
+      // Process function to create email accounts
+      const createEmailAccount = async (emailInfo, index) => {
         const password = useRandom ? UtilService.generatePassword(12) : defaultPassword
         const quota = emailInfo.quota || defaultQuota
 
-        processedEmails++
-        mainSpinner.text = `Creating account: ${emailInfo.email} (${processedEmails}/${totalEmails})`
-
         try {
           const success = await emailService.createAccount(emailInfo.username, emailInfo.domain, password, quota)
-
-          results.push({
+          
+          return {
             email: emailInfo.email,
             username: emailInfo.username,
             domain: emailInfo.domain,
@@ -311,21 +335,39 @@ export default class CpanelCreate extends Command {
             quota: quota,
             createStatus: success ? 'SUCCESS' : 'FAILED',
             timestamp: new Date().toISOString()
-          })
+          }
         } catch (error) {
-          results.push({
+          return {
             email: emailInfo.email,
             username: emailInfo.username,
             domain: emailInfo.domain,
             password: password,
             quota: quota,
             createStatus: 'FAILED',
-            timestamp: new Date().toISOString()
-          })
+            timestamp: new Date().toISOString(),
+            error: error.message
+          }
         }
       }
 
-      mainSpinner.succeed(`Email creation process completed (${processedEmails}/${totalEmails} emails processed)`)
+      // Execute parallel email creation
+      const processResults = await parallelService.createProcessTasks(
+        emails,
+        createEmailAccount,
+        {
+          concurrency: parallelJobs,
+          title: 'Creating email accounts in parallel',
+          getTitleFor: (emailInfo) => `Create ${emailInfo.email}`,
+          progressCallback: (result, index, total) => {
+            if (flags.debug) {
+              const status = result.createStatus === 'SUCCESS' ? '✅' : '❌'
+              console.log(`${status} ${result.email} (${index + 1}/${total})`)
+            }
+          }
+        }
+      )
+
+      const results = processResults.processResults || []
 
       // Save results
       const csvSpinner = ora('Saving results to CSV file...').start()
@@ -337,21 +379,29 @@ export default class CpanelCreate extends Command {
         throw error
       }
 
-      // Show summary
-      const successCount = results.filter(r => r.createStatus === 'SUCCESS').length
-      const failedCount = results.filter(r => r.createStatus === 'FAILED').length
+      // Generate and show summary using parallel service
+      const summary = parallelService.generateSummary(results, { printSummary: false })
 
       console.log('')
       UtilService.printColor('green', '=== Process Complete ===')
       UtilService.printColor('green', `\nSummary:`)
-      UtilService.printColor('green', `  ✅ Successful creations: ${successCount}`)
+      UtilService.printColor('green', `  📊 Total emails processed: ${summary.total}`)
+      UtilService.printColor('green', `  ✅ Successful creations: ${summary.successful}`)
       
-      if (failedCount > 0) {
-        UtilService.printColor('red', `  ❌ Failed creations: ${failedCount}`)
+      if (summary.failed > 0) {
+        UtilService.printColor('red', `  ❌ Failed creations: ${summary.failed}`)
       }
 
-      if (useRandom && successCount > 0) {
+      if (summary.skipped > 0) {
+        UtilService.printColor('yellow', `  ⏭️  Skipped: ${summary.skipped}`)
+      }
+
+      if (useRandom && summary.successful > 0) {
         UtilService.printColor('yellow', '  📝 Random passwords generated - check CSV file for details')
+      }
+
+      if (parallelJobs > 1) {
+        UtilService.printColor('cyan', `  🚀 Processed with ${parallelJobs} parallel jobs`)
       }
 
       UtilService.printColor('cyan', '\nThank you for using emoo! 🐄')
