@@ -95,6 +95,8 @@ export class ImapService {
     
     // Disable imapsync's own logging to prevent LOG_imapsync folder creation
     flags.push('--nolog');
+    flags.push('--useuid');
+    flags.push('--maxsize', 100_000_000);
     
     // Add dry run flag only if explicitly requested
     if (options.dryRun) {
@@ -143,21 +145,27 @@ export class ImapService {
   /**
    * Generate log file path for a sync operation
    */
-  generateLogFilePath(config, logDir) {
+  generateLogFilePath(config, logDir, unixTimestamp = null) {
     const { src_user: suser, dst_user: duser } = config;
     const sanitizedSrc = suser.replace(/@/g, '_');
     const sanitizedDst = duser.replace(/@/g, '_');
     
-    // Add timestamp to log file name
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    // Use provided unix timestamp or generate new one
+    const unixTime = unixTimestamp || Math.floor(Date.now() / 1000);
     
-    return path.join(logDir, `${sanitizedSrc}__to__${sanitizedDst}_${timestamp}.log`);
+    // Add ISO timestamp to log file name for readability
+    const isoTimestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    
+    // Create directory path with unix timestamp grouping
+    const timestampDir = path.join(logDir, unixTime.toString());
+    
+    return path.join(timestampDir, `${sanitizedSrc}__to__${sanitizedDst}_${isoTimestamp}.log`);
   }
 
   /**
    * Create a single sync task for listr2
    */
-  createSyncTask(config, options = {}) {
+  createSyncTask(config, options = {}, unixTimestamp = null, syncResults = null) {
     const {
       src_host: shost,
       src_user: suser,
@@ -176,9 +184,12 @@ export class ImapService {
       title: displayText,
       task: async (ctx, task) => {
         const logDir = options.logDir || './results/sync-log';
-        await fs.ensureDir(logDir);
+        
+        const logFile = this.generateLogFilePath(config, logDir, unixTimestamp);
+        
+        // Ensure the directory exists (including unix timestamp subdirectory)
+        await fs.ensureDir(path.dirname(logFile));
 
-        const logFile = this.generateLogFilePath(config, logDir);
         const imapsyncArgs = this.buildImapsyncArgs(config, { ...options, logFile });
 
         return new Promise((resolve, reject) => {
@@ -234,6 +245,15 @@ export class ImapService {
             logStream.end();
             
             if (code === 0) {
+              // Update success counter
+              if (syncResults) {
+                if (options.dryRun) {
+                  syncResults.dryRun++;
+                } else {
+                  syncResults.successful++;
+                }
+              }
+              
               if (options.dryRun) {
                 task.title = `🔍 DRY RUN completed: ${displayText}`;
               } else {
@@ -241,6 +261,11 @@ export class ImapService {
               }
               resolve({ success: true, logFile, dryRun: options.dryRun });
             } else {
+              // Update failure counter
+              if (syncResults) {
+                syncResults.failed++;
+              }
+              
               const prefix = options.dryRun ? '🔍 DRY RUN failed: ' : '❌ Failed to sync: ';
               task.title = `${prefix}${displayText} (exit code: ${code})`;
               reject(new Error(`${prefix}${displayText} (exit code: ${code})`));
@@ -248,6 +273,11 @@ export class ImapService {
           });
 
           child.on('error', (error) => {
+            // Update failure counter
+            if (syncResults) {
+              syncResults.failed++;
+            }
+            
             const prefix = options.dryRun ? '🔍 DRY RUN error: ' : '❌ Error running imapsync: ';
             task.title = `${prefix}${error.message}`;
             reject(new Error(`${prefix}${error.message}`));
@@ -301,9 +331,20 @@ export class ImapService {
         console.log(chalk.yellow('\n🔍 DRY RUN MODE - No actual synchronization will be performed\n'));
       }
 
+      // Generate unix timestamp for this sync batch to group logs
+      const batchUnixTimestamp = Math.floor(Date.now() / 1000);
+      console.log(chalk.blue(`📁 Logs will be grouped in directory: ${batchUnixTimestamp}`));
+
+      // Track results manually using a shared counter
+      const syncResults = {
+        successful: 0,
+        failed: 0,
+        dryRun: 0
+      };
+
       // Create sync tasks
       const syncTasks = configs
-        .map(config => this.createSyncTask(config, options))
+        .map(config => this.createSyncTask(config, options, batchUnixTimestamp, syncResults))
         .filter(task => task !== null); // Filter out skipped tasks
 
       if (syncTasks.length === 0) {
@@ -332,11 +373,10 @@ export class ImapService {
         console.log(chalk.green('\n✅ All sync tasks completed!'));
       } catch (error) {
         console.log(chalk.yellow('\n⚠️  Some sync tasks failed, but continuing with summary...'));
-        results = error.errors || [];
       }
 
       // Generate summary
-      return this.generateSummary(results, options, syncTasks.length);
+      return this.generateSummary(syncResults, options, syncTasks.length, batchUnixTimestamp);
 
     } catch (error) {
       throw error;
@@ -346,16 +386,16 @@ export class ImapService {
   /**
    * Generate synchronization summary
    */
-  generateSummary(results, options, totalTasks) {
-    // Since listr2 handles errors differently, we need to count based on completed/failed tasks
-    const successful = Array.isArray(results) ? results.filter(r => r && r.success && !r.dryRun).length : 0;
-    const failed = totalTasks - successful;
+  generateSummary(syncResults, options, totalTasks, unixTimestamp = null) {
+    const { successful, failed, dryRun } = syncResults;
     const skipped = 0; // We filter out skipped tasks before creating the task list
-    const dryRun = Array.isArray(results) ? results.filter(r => r && r.dryRun).length : 0;
 
     console.log(chalk.green('\n=== Synchronization Summary ==='));
     if (options.dryRun) {
-      console.log(chalk.yellow(`Dry run tasks: ${totalTasks}`));
+      console.log(chalk.yellow(`Dry run tasks: ${dryRun}`));
+      if (failed > 0) {
+        console.log(chalk.red(`Failed: ${failed}`));
+      }
     } else {
       console.log(chalk.green(`Successful: ${successful}`));
       console.log(chalk.red(`Failed: ${failed}`));
@@ -364,8 +404,16 @@ export class ImapService {
       }
     }
 
-    if (options.logDir) {
+    if (options.logDir && unixTimestamp) {
+      console.log(chalk.blue(`Log files saved to: ${path.join(options.logDir, unixTimestamp.toString())}`));
+      console.log(chalk.gray(`Unix timestamp: ${unixTimestamp} (${new Date(unixTimestamp * 1000).toISOString()})`));
+    } else if (options.logDir) {
       console.log(chalk.blue(`Log files saved to: ${options.logDir}`));
+    }
+
+    const processedJobs = parseInt(options.jobs) || 1;
+    if (processedJobs > 1) {
+      console.log(chalk.blue(`🚀 Processed with ${processedJobs} parallel jobs`));
     }
 
     return {
