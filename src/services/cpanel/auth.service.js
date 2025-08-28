@@ -28,8 +28,23 @@ export class CpanelService {
     this.apiKey = apiKey;
     this.authMethod = 'cpanel';
     
-    // Add default port if not specified
-    if (!server.includes(':')) {
+    // Add default port if not specified, handle IPv6 addresses properly using regex
+    const ipv6WithPortRegex = /^\[.+\]:\d+$/;           // [2001:db8::1]:2083
+    const ipv6WithoutPortRegex = /^\[.+\]$/;            // [2001:db8::1]
+    const ipv6RawRegex = /^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$/; // 2001:db8::1
+    const withPortRegex = /:.+:\d+$|^[^:]+:\d+$/;       // hostname:port or ip:port
+    
+    if (ipv6WithPortRegex.test(server) || withPortRegex.test(server)) {
+      // Already has port: [2001:db8::1]:2083 or example.com:2083 or 192.168.1.1:2083
+      this.server = server;
+    } else if (ipv6WithoutPortRegex.test(server)) {
+      // IPv6 without port: [2001:db8::1]
+      this.server = `${server}:2083`;
+    } else if (ipv6RawRegex.test(server)) {
+      // IPv6 without brackets: 2001:db8::1
+      this.server = `[${server}]:2083`;
+    } else {
+      // IPv4 or hostname without port: example.com or 192.168.1.1
       this.server = `${server}:2083`;
     }
   }
